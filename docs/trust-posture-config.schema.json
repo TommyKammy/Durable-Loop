@@ -1,0 +1,18 @@
+{
+  "contractName": "codex-supervisor.trust-posture-config",
+  "contractVersion": 1,
+  "canonicalReference": "docs/configuration.md",
+  "description": "Published trust posture configuration surface. Trust posture is an operator-owned decision; dangerous or authority-expanding choices require explicit opt-ins and never become hidden authority.",
+  "fields": ["trustMode", "executionSafetyMode", "localCiCommand", "reviewProvider"],
+  "compatibilityPolicy": {
+    "versionField": "contractVersion",
+    "enforcementBoundary": "setup-readiness",
+    "additiveChanges": [
+      "Adding new optional fields or new enum values is additive and backward-compatible."
+    ],
+    "breakingChanges": [
+      "Removing or renaming a field, or changing required semantics, is a breaking change."
+    ],
+    "stabilityLimit": "This contract does not claim runtime enforcement beyond the existing setup-readiness and config-loader runtime."
+  }
+}

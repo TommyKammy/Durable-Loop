@@ -1,0 +1,28 @@
+{
+  "contractName": "codex-supervisor.operator-actions",
+  "contractVersion": 1,
+  "canonicalSource": "src/operator-actions.ts",
+  "description": "Published operator action vocabulary. codex-supervisor remains the implementation executor; operator actions must not bypass executor safety gates, issue-lint, fresh GitHub PR facts, local CI, or operator confirmations. This artifact grants no new executor authority and does not enable multi-repo orchestration.",
+  "actions": [
+    { "action": "continue", "summary": "Let the supervised loop keep running the next safe step." },
+    { "action": "restart_loop", "summary": "Restart a stopped or stalled loop after the host is healthy." },
+    { "action": "fix_config", "summary": "Repair the supervisor config or host before retrying." },
+    { "action": "adopt_local_ci", "summary": "Adopt the repo-owned local CI contract as the pre-PR gate." },
+    { "action": "dismiss_local_ci", "summary": "Acknowledge and dismiss the advisory local CI candidate." },
+    { "action": "manual_review", "summary": "Hand the issue to a human for manual review judgment." },
+    { "action": "resolve_stale_review_bot", "summary": "Resolve a metadata-only stale review bot state." },
+    { "action": "provider_outage_suspected", "summary": "Flag a suspected provider outage instead of treating signal as content." },
+    { "action": "safe_to_ignore", "summary": "Acknowledge an advisory-only signal as safe to ignore." }
+  ],
+  "compatibilityPolicy": {
+    "versionField": "contractVersion",
+    "enforcementBoundary": "src/operator-actions.ts",
+    "additiveChanges": [
+      "Adding new optional fields or new enum values is additive and backward-compatible."
+    ],
+    "breakingChanges": [
+      "Removing or renaming an action, or changing required semantics, is a breaking change."
+    ],
+    "stabilityLimit": "This artifact does not claim runtime enforcement beyond the existing runtime in src/operator-actions.ts."
+  }
+}

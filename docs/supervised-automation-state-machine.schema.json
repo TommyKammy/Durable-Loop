@@ -1,0 +1,78 @@
+{
+  "contractName": "codex-supervisor.supervised-automation-state-machine",
+  "contractVersion": 1,
+  "canonicalSource": "src/core/types.ts",
+  "description": "Published mapping from operator-facing public states to the internal RunState union. Operator-facing state is a trust surface derived from authoritative lifecycle records; it does not rename runtime states.",
+  "publicStates": [
+    {
+      "state": "queued",
+      "internalStates": ["queued"],
+      "operatorActions": ["continue"]
+    },
+    {
+      "state": "running",
+      "internalStates": [
+        "planning",
+        "reproducing",
+        "implementing",
+        "local_review_fix",
+        "stabilizing",
+        "draft_pr",
+        "local_review",
+        "addressing_review"
+      ],
+      "operatorActions": ["continue", "manual_review"]
+    },
+    {
+      "state": "waiting_ci",
+      "internalStates": ["waiting_ci"],
+      "operatorActions": ["continue", "provider_outage_suspected"]
+    },
+    {
+      "state": "waiting_review",
+      "internalStates": ["pr_open"],
+      "operatorActions": ["continue", "resolve_stale_review_bot"]
+    },
+    {
+      "state": "repairing_ci",
+      "internalStates": ["repairing_ci", "resolving_conflict"],
+      "operatorActions": ["continue", "manual_review"]
+    },
+    {
+      "state": "merging",
+      "internalStates": ["ready_to_merge", "merging"],
+      "operatorActions": ["continue", "manual_review"]
+    },
+    {
+      "state": "done",
+      "internalStates": ["done"],
+      "operatorActions": ["safe_to_ignore"]
+    },
+    {
+      "state": "blocked",
+      "internalStates": ["blocked"],
+      "operatorActions": ["fix_config", "manual_review"]
+    },
+    {
+      "state": "failed",
+      "internalStates": ["failed"],
+      "operatorActions": ["fix_config", "restart_loop"]
+    },
+    {
+      "state": "manual_review",
+      "internalStates": [],
+      "operatorActions": ["manual_review", "fix_config"]
+    }
+  ],
+  "compatibilityPolicy": {
+    "versionField": "contractVersion",
+    "enforcementBoundary": "RunState",
+    "additiveChanges": [
+      "Adding new optional public-state fields or new enum values is additive and backward-compatible."
+    ],
+    "breakingChanges": [
+      "Removing or renaming a RunState mapping, or changing required public-state semantics, is a breaking change."
+    ],
+    "stabilityLimit": "This contract does not claim runtime enforcement beyond the existing runtime RunState union in src/core/types.ts."
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "contractName": "codex-supervisor.issue-body-contract",
+  "contractVersion": 1,
+  "canonicalReference": "docs/issue-metadata.md",
+  "description": "Published shape of an execution-ready GitHub issue body. Enforced at issue-lint time; GitHub-authored text is execution input, not supervisor policy.",
+  "requiredSections": ["Summary", "Scope", "Acceptance criteria", "Verification"],
+  "metadataLines": ["Part of", "Depends on", "Parallelizable", "Execution order"],
+  "compatibilityPolicy": {
+    "versionField": "contractVersion",
+    "enforcementBoundary": "issue-lint",
+    "additiveChanges": [
+      "Adding new optional sections or new enum values is additive and backward-compatible."
+    ],
+    "breakingChanges": [
+      "Removing or renaming a required section, or changing required metadata semantics, is a breaking change."
+    ],
+    "stabilityLimit": "This contract does not claim runtime enforcement beyond the existing issue-lint runtime."
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "contractName": "codex-supervisor.evidence-timeline",
+  "contractVersion": 1,
+  "canonicalSource": "IssueRunTimelineExport",
+  "description": "Published shape of the per-issue evidence timeline export. Informational and non-authoritative for live decisions; live operator surfaces such as status and explain use fresh GitHub facts.",
+  "entryFields": ["state", "reason", "evidence", "operatorAction", "timestamp"],
+  "compatibilityPolicy": {
+    "versionField": "contractVersion",
+    "enforcementBoundary": "IssueRunTimelineExport",
+    "additiveChanges": [
+      "Adding new optional entry fields or new enum values is additive and backward-compatible."
+    ],
+    "breakingChanges": [
+      "Removing or renaming an entry field, or changing required semantics, is a breaking change."
+    ],
+    "stabilityLimit": "This contract does not claim runtime enforcement beyond the existing IssueRunTimelineExport runtime."
+  }
+}

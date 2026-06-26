@@ -1,0 +1,37 @@
+{
+  "artifactName": "codex-supervisor.codex-automation-connector-boundary",
+  "artifactVersion": 1,
+  "canonicalGuide": "docs/automation.md",
+  "enforcementBoundary": "codex-supervisor-executor-safety-gates",
+  "description": "codex-supervisor remains the implementation executor. Codex app Automation is an orchestration boundary and must not bypass executor safety gates, issue-lint, fresh GitHub PR facts, local CI, or operator confirmations. It grants no new executor authority and adds no multi-repo orchestration to core.",
+  "allowedResponsibilities": [
+    "evaluate",
+    "route",
+    "draft",
+    "record",
+    "notify",
+    "prepare_operator_evidence"
+  ],
+  "prohibitedBypasses": [
+    "executor_safety_gates",
+    "issue_lint",
+    "fresh_pr_facts",
+    "local_ci",
+    "operator_confirmations"
+  ],
+  "nonGoals": [
+    "new_executor_authority",
+    "multi_repo_orchestration_in_core"
+  ],
+  "compatibilityPolicy": {
+    "versionField": "artifactVersion",
+    "enforcementBoundary": "codex-supervisor-executor-safety-gates",
+    "additiveChanges": [
+      "Adding new optional fields or new enum values is additive and backward-compatible."
+    ],
+    "breakingChanges": [
+      "Removing or renaming a responsibility, prohibited bypass, or non-goal, or changing required semantics, is a breaking change."
+    ],
+    "stabilityLimit": "This artifact does not claim runtime enforcement beyond the existing codex-supervisor executor safety gates."
+  }
+}

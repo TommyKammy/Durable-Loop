@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Runtime state, replay corpus output, lock files
+.codex-supervisor/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Coverage / test artifacts
+coverage/
+*.tsbuildinfo
+
+# OS / editor cruft
+.DS_Store
+.idea/
+.vscode/
+*.swp

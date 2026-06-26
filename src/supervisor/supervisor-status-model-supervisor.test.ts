@@ -1,0 +1,992 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { configuredBotReviewThreads, manualReviewThreads } from "./supervisor-reporting";
+import { buildDetailedStatusModel, buildDetailedStatusSummaryLines } from "./supervisor-status-model";
+import { GitHubPullRequest, IssueRunRecord, PullRequestCheck, ReviewThread, SupervisorConfig } from "../core/types";
+
+function createConfig(overrides: Partial<SupervisorConfig> = {}): SupervisorConfig {
+  return {
+    repoPath: "/tmp/repo",
+    repoSlug: "owner/repo",
+    defaultBranch: "main",
+    workspaceRoot: "/tmp/workspaces",
+    stateBackend: "json",
+    stateFile: "/tmp/state.json",
+    codexBinary: "/usr/bin/codex",
+    codexModelStrategy: "inherit",
+    codexReasoningEffortByState: {},
+    codexReasoningEscalateOnRepeatedFailure: true,
+    sharedMemoryFiles: [],
+    gsdEnabled: false,
+    gsdAutoInstall: false,
+    gsdInstallScope: "global",
+    gsdPlanningFiles: [],
+    localReviewEnabled: false,
+    localReviewAutoDetect: true,
+    localReviewRoles: [],
+    localReviewArtifactDir: "/tmp/reviews",
+    localReviewConfidenceThreshold: 0.7,
+    localReviewReviewerThresholds: {
+      generic: { confidenceThreshold: 0.7, minimumSeverity: "low" },
+      specialist: { confidenceThreshold: 0.7, minimumSeverity: "low" },
+    },
+    localReviewPolicy: "block_ready",
+    localReviewHighSeverityAction: "retry",
+    reviewBotLogins: [],
+    humanReviewBlocksMerge: true,
+    issueJournalRelativePath: ".codex-supervisor/issue-journal.md",
+    issueJournalMaxChars: 6000,
+    skipTitlePrefixes: [],
+    branchPrefix: "codex/reopen-issue-",
+    pollIntervalSeconds: 60,
+    copilotReviewWaitMinutes: 10,
+    copilotReviewTimeoutAction: "continue",
+    codexExecTimeoutMinutes: 30,
+    maxCodexAttemptsPerIssue: 5,
+    maxImplementationAttemptsPerIssue: 5,
+    maxRepairAttemptsPerIssue: 5,
+    timeoutRetryLimit: 2,
+    blockedVerificationRetryLimit: 3,
+    sameBlockerRepeatLimit: 2,
+    sameFailureSignatureRepeatLimit: 3,
+    maxDoneWorkspaces: 24,
+    cleanupDoneWorkspacesAfterHours: 24,
+    mergeMethod: "squash",
+    draftPrAfterAttempt: 1,
+    ...overrides,
+  };
+}
+
+function createRecord(overrides: Partial<IssueRunRecord> = {}): IssueRunRecord {
+  return {
+    issue_number: 366,
+    state: "blocked",
+    branch: "codex/reopen-issue-366",
+    pr_number: null,
+    workspace: "/tmp/workspaces/issue-366",
+    journal_path: "/tmp/workspaces/issue-366/.codex-supervisor/issue-journal.md",
+    review_wait_started_at: null,
+    review_wait_head_sha: null,
+    copilot_review_requested_observed_at: null,
+    copilot_review_requested_head_sha: null,
+    copilot_review_timed_out_at: null,
+    copilot_review_timeout_action: null,
+    copilot_review_timeout_reason: null,
+    codex_session_id: "session-1",
+    local_review_head_sha: null,
+    local_review_blocker_summary: null,
+    local_review_summary_path: null,
+    local_review_run_at: null,
+    local_review_max_severity: null,
+    local_review_findings_count: 0,
+    local_review_root_cause_count: 0,
+    local_review_verified_max_severity: null,
+    local_review_verified_findings_count: 0,
+    local_review_recommendation: null,
+    local_review_degraded: false,
+    last_local_review_signature: null,
+    repeated_local_review_signature_count: 0,
+    external_review_head_sha: null,
+    external_review_misses_path: null,
+    external_review_matched_findings_count: 0,
+    external_review_near_match_findings_count: 0,
+    external_review_missed_findings_count: 0,
+    attempt_count: 2,
+    implementation_attempt_count: 2,
+    repair_attempt_count: 0,
+    timeout_retry_count: 0,
+    blocked_verification_retry_count: 0,
+    repeated_blocker_count: 0,
+    repeated_failure_signature_count: 1,
+    last_head_sha: "abcdef1",
+    last_codex_summary: null,
+    last_recovery_reason: null,
+    last_recovery_at: null,
+    last_error: "Codex completed without updating the issue journal for issue #366.",
+    last_failure_kind: null,
+    last_failure_context: null,
+    last_blocker_signature: null,
+    last_failure_signature: null,
+    blocked_reason: null,
+    processed_review_thread_ids: [],
+    processed_review_thread_fingerprints: [],
+    updated_at: "2026-03-11T01:50:41.997Z",
+    ...overrides,
+  };
+}
+
+function createPullRequest(overrides: Partial<GitHubPullRequest> = {}): GitHubPullRequest {
+  return {
+    number: 44,
+    title: "Test PR",
+    url: "https://example.test/pr/44",
+    state: "OPEN",
+    createdAt: "2026-03-11T14:00:00Z",
+    isDraft: false,
+    reviewDecision: "REVIEW_REQUIRED",
+    mergeStateStatus: "CLEAN",
+    mergeable: "MERGEABLE",
+    headRefName: "codex/issue-44",
+    headRefOid: "deadbeef",
+    mergedAt: null,
+    ...overrides,
+  };
+}
+
+test("buildDetailedStatusModel returns the reusable core status lines for an active PR", () => {
+  const config = createConfig({
+    localReviewEnabled: true,
+    localReviewPolicy: "block_ready",
+    reviewBotLogins: ["chatgpt-codex-connector"],
+  });
+  const record = createRecord({
+    local_review_head_sha: "deadbeef",
+    local_review_blocker_summary: "high src/supervisor.ts:210-214 stale artifact context drives the wrong repair path.",
+    local_review_max_severity: "high",
+    local_review_findings_count: 3,
+    local_review_recommendation: "changes_requested",
+    local_review_run_at: "2026-03-11T14:05:00Z",
+    pr_number: 44,
+    state: "pr_open",
+    blocked_reason: null,
+    last_error: null,
+    last_failure_context: null,
+  });
+
+  const lines = buildDetailedStatusModel({
+    config,
+    activeRecord: record,
+    latestRecord: null,
+    trackedIssueCount: 1,
+    pr: createPullRequest({
+      copilotReviewState: "not_requested",
+      copilotReviewRequestedAt: null,
+      copilotReviewArrivedAt: null,
+    }),
+    checks: [{ name: "build", state: "SUCCESS", bucket: "pass", workflow: "CI" }],
+    reviewThreads: [],
+    manualReviewThreads,
+    configuredBotReviewThreads,
+    pendingBotReviewThreads: (innerConfig, innerRecord, innerPr, innerReviewThreads) =>
+      configuredBotReviewThreads(innerConfig, innerReviewThreads).filter(
+        (thread) =>
+          !innerRecord.processed_review_thread_ids.includes(thread.id) &&
+          innerRecord.last_head_sha === innerPr.headRefOid,
+      ),
+    summarizeChecks: (checks) => ({
+      allPassing: checks.every((check) => check.bucket === "pass"),
+      hasPending: checks.some((check) => check.bucket === "pending" || check.bucket === "cancel"),
+      hasFailing: checks.some((check) => check.bucket === "fail"),
+    }),
+    mergeConflictDetected: (pr) => pr.mergeStateStatus === "DIRTY",
+  });
+
+  assert.ok(lines.includes("issue=#366"));
+  assert.ok(
+    lines.some((line) =>
+      /local_review gating=yes policy=block_ready findings=3 .* head=current .* blocker_summary=high src\/supervisor\.ts:210-214 stale artifact context drives the wrong repair path\./.test(
+        line,
+      ),
+    ),
+  );
+  assert.ok(lines.includes("external_review head=none reviewed_head_sha=none matched=0 near_match=0 missed=0"));
+  assert.ok(
+    lines.includes(
+      "review_bot_profile profile=codex provider=chatgpt-codex-connector reviewers=chatgpt-codex-connector signal_source=review_threads",
+    ),
+  );
+  assert.ok(
+    lines.includes(
+      "review_bot_diagnostics status=missing_provider_signal observed_review=none expected_reviewers=chatgpt-codex-connector next_check=provider_setup_or_delivery",
+    ),
+  );
+});
+
+test("buildDetailedStatusModel marks the tracked PR current-head gate as active even in advisory mode", () => {
+  const lines = buildDetailedStatusModel({
+    config: createConfig({
+      localReviewEnabled: true,
+      localReviewPolicy: "advisory",
+      trackedPrCurrentHeadLocalReviewRequired: true,
+    }),
+    activeRecord: createRecord({
+      local_review_head_sha: "head-old",
+      local_review_findings_count: 0,
+      local_review_recommendation: "ready",
+      local_review_run_at: "2026-03-11T14:05:00Z",
+      pr_number: 44,
+      state: "blocked",
+      blocked_reason: "verification",
+      last_error: "Waiting for a current-head local review run.",
+    }),
+    latestRecord: null,
+    trackedIssueCount: 1,
+    pr: createPullRequest({ headRefOid: "head-new" }),
+    checks: [{ name: "build", state: "SUCCESS", bucket: "pass", workflow: "CI" }],
+    reviewThreads: [],
+    manualReviewThreads,
+    configuredBotReviewThreads,
+    pendingBotReviewThreads: (innerConfig, innerRecord, innerPr, innerReviewThreads) =>
+      configuredBotReviewThreads(innerConfig, innerReviewThreads).filter(
+        (thread) =>
+          !innerRecord.processed_review_thread_ids.includes(thread.id) &&
+          innerRecord.last_head_sha === innerPr.headRefOid,
+      ),
+    summarizeChecks: (checks) => ({
+      allPassing: checks.every((check) => check.bucket === "pass"),
+      hasPending: checks.some((check) => check.bucket === "pending" || check.bucket === "cancel"),
+      hasFailing: checks.some((check) => check.bucket === "fail"),
+    }),
+    mergeConflictDetected: (pr) => pr.mergeStateStatus === "DIRTY",
+  });
+
+  const localReviewLine = lines.find((line) => line.startsWith("local_review "));
+  assert.ok(localReviewLine);
+  assert.match(localReviewLine, /\bgating=yes\b/);
+  assert.match(localReviewLine, /\bpolicy=advisory\b/);
+  assert.match(localReviewLine, /\bhead=stale\b/);
+  assert.match(localReviewLine, /\bneeds_review_run=yes\b/);
+  assert.match(localReviewLine, /\bdrift=head-old->head-new\b/);
+});
+
+test("buildDetailedStatusModel explains why an active CodeRabbit settled wait is pausing merge progression", () => {
+  const originalNow = Date.now;
+  Date.now = () => Date.parse("2026-03-16T00:00:03.000Z");
+
+  try {
+    const lines = buildDetailedStatusModel({
+      config: createConfig({
+        reviewBotLogins: ["coderabbitai", "coderabbitai[bot]"],
+      }),
+      activeRecord: createRecord({
+        pr_number: 44,
+        state: "waiting_ci",
+        blocked_reason: null,
+        last_error: null,
+      }),
+      latestRecord: null,
+      trackedIssueCount: 1,
+      pr: createPullRequest({
+        configuredBotCurrentHeadObservedAt: "2026-03-16T00:00:00.000Z",
+      }),
+      checks: [{ name: "build", state: "SUCCESS", bucket: "pass", workflow: "CI" }],
+      reviewThreads: [],
+      manualReviewThreads,
+      configuredBotReviewThreads,
+      pendingBotReviewThreads: (innerConfig, innerRecord, innerPr, innerReviewThreads) =>
+        configuredBotReviewThreads(innerConfig, innerReviewThreads).filter(
+          (thread) =>
+            !innerRecord.processed_review_thread_ids.includes(thread.id) &&
+            innerRecord.last_head_sha === innerPr.headRefOid,
+        ),
+      summarizeChecks: (checks) => ({
+        allPassing: checks.every((check) => check.bucket === "pass"),
+        hasPending: checks.some((check) => check.bucket === "pending" || check.bucket === "cancel"),
+        hasFailing: checks.some((check) => check.bucket === "fail"),
+      }),
+      mergeConflictDetected: (pr) => pr.mergeStateStatus === "DIRTY",
+    });
+
+    assert.ok(
+      lines.includes(
+        "configured_bot_settled_wait status=active provider=coderabbit pause_reason=recent_current_head_observation recent_observation=current_head_activity observed_at=2026-03-16T00:00:00.000Z configured_wait_seconds=5 wait_until=2026-03-16T00:00:05.000Z",
+      ),
+    );
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test("buildDetailedStatusModel explains why an active CodeRabbit initial grace wait is pausing merge progression", () => {
+  const originalNow = Date.now;
+  Date.now = () => Date.parse("2026-03-16T00:01:00.000Z");
+
+  try {
+    const lines = buildDetailedStatusModel({
+      config: createConfig({
+        reviewBotLogins: ["coderabbitai", "coderabbitai[bot]"],
+        configuredBotInitialGraceWaitSeconds: 90,
+      }),
+      activeRecord: createRecord({
+        pr_number: 44,
+        state: "waiting_ci",
+        blocked_reason: null,
+        last_error: null,
+      }),
+      latestRecord: null,
+      trackedIssueCount: 1,
+      pr: createPullRequest({
+        currentHeadCiGreenAt: "2026-03-16T00:00:00.000Z",
+        configuredBotCurrentHeadObservedAt: null,
+      }),
+      checks: [{ name: "build", state: "SUCCESS", bucket: "pass", workflow: "CI" }],
+      reviewThreads: [],
+      manualReviewThreads,
+      configuredBotReviewThreads,
+      pendingBotReviewThreads: (innerConfig, innerRecord, innerPr, innerReviewThreads) =>
+        configuredBotReviewThreads(innerConfig, innerReviewThreads).filter(
+          (thread) =>
+            !innerRecord.processed_review_thread_ids.includes(thread.id) &&
+            innerRecord.last_head_sha === innerPr.headRefOid,
+        ),
+      summarizeChecks: (checks) => ({
+        allPassing: checks.every((check) => check.bucket === "pass"),
+        hasPending: checks.some((check) => check.bucket === "pending" || check.bucket === "cancel"),
+        hasFailing: checks.some((check) => check.bucket === "fail"),
+      }),
+      mergeConflictDetected: (pr) => pr.mergeStateStatus === "DIRTY",
+    });
+
+    assert.ok(
+      lines.includes(
+        "configured_bot_initial_grace_wait status=active provider=coderabbit pause_reason=awaiting_initial_provider_activity recent_observation=required_checks_green observed_at=2026-03-16T00:00:00.000Z configured_wait_seconds=90 wait_until=2026-03-16T00:01:30.000Z",
+      ),
+    );
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test("buildDetailedStatusModel explains when strict CodeRabbit current-head gating is waiting after the initial grace", () => {
+  const originalNow = Date.now;
+  Date.now = () => Date.parse("2026-03-16T00:12:00.000Z");
+
+  try {
+    const lines = buildDetailedStatusModel({
+      config: createConfig({
+        reviewBotLogins: ["coderabbitai", "coderabbitai[bot]"],
+        configuredBotRequireCurrentHeadSignal: true,
+        configuredBotInitialGraceWaitSeconds: 90,
+        configuredBotCurrentHeadSignalTimeoutMinutes: 10,
+      }),
+      activeRecord: createRecord({
+        pr_number: 44,
+        state: "waiting_ci",
+        blocked_reason: null,
+        last_error: null,
+        review_wait_started_at: "2026-03-16T00:00:00.000Z",
+        review_wait_head_sha: "deadbeef",
+      }),
+      latestRecord: null,
+      trackedIssueCount: 1,
+      pr: createPullRequest({
+        currentHeadCiGreenAt: "2026-03-16T00:10:00.000Z",
+        configuredBotCurrentHeadObservedAt: null,
+      }),
+      checks: [{ name: "build", state: "SUCCESS", bucket: "pass", workflow: "CI" }],
+      reviewThreads: [],
+      manualReviewThreads,
+      configuredBotReviewThreads,
+      pendingBotReviewThreads: (innerConfig, innerRecord, innerPr, innerReviewThreads) =>
+        configuredBotReviewThreads(innerConfig, innerReviewThreads).filter(
+          (thread) =>
+            !innerRecord.processed_review_thread_ids.includes(thread.id) &&
+            innerRecord.last_head_sha === innerPr.headRefOid,
+        ),
+      summarizeChecks: (checks) => ({
+        allPassing: checks.every((check) => check.bucket === "pass"),
+        hasPending: checks.some((check) => check.bucket === "pending" || check.bucket === "cancel"),
+        hasFailing: checks.some((check) => check.bucket === "fail"),
+      }),
+      mergeConflictDetected: (pr) => pr.mergeStateStatus === "DIRTY",
+    });
+
+    assert.ok(
+      lines.includes(
+        "configured_bot_current_head_signal_wait status=active provider=coderabbit pause_reason=awaiting_current_head_signal_after_required_checks recent_observation=required_checks_green observed_at=2026-03-16T00:10:00.000Z configured_wait_minutes=10 wait_until=2026-03-16T00:20:00.000Z",
+      ),
+    );
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test("buildDetailedStatusModel explains Codex Connector current-head signal waits with Codex provider diagnostics", () => {
+  const originalNow = Date.now;
+  Date.now = () => Date.parse("2026-03-16T00:12:00.000Z");
+
+  try {
+    const lines = buildDetailedStatusModel({
+      config: createConfig({
+        reviewBotLogins: ["chatgpt-codex-connector"],
+        configuredBotCurrentHeadSignalTimeoutMinutes: 10,
+      }),
+      activeRecord: createRecord({
+        pr_number: 44,
+        state: "waiting_ci",
+        blocked_reason: null,
+        last_error: null,
+        review_wait_started_at: "2026-03-16T00:00:00.000Z",
+        review_wait_head_sha: "deadbeef",
+      }),
+      latestRecord: null,
+      trackedIssueCount: 1,
+      pr: createPullRequest({
+        currentHeadCiGreenAt: "2026-03-16T00:10:00.000Z",
+        configuredBotCurrentHeadObservedAt: null,
+      }),
+      checks: [{ name: "build", state: "SUCCESS", bucket: "pass", workflow: "CI" }],
+      reviewThreads: [],
+      manualReviewThreads,
+      configuredBotReviewThreads,
+      pendingBotReviewThreads: (innerConfig, innerRecord, innerPr, innerReviewThreads) =>
+        configuredBotReviewThreads(innerConfig, innerReviewThreads).filter(
+          (thread) =>
+            !innerRecord.processed_review_thread_ids.includes(thread.id) &&
+            innerRecord.last_head_sha === innerPr.headRefOid,
+        ),
+      summarizeChecks: (checks) => ({
+        allPassing: checks.every((check) => check.bucket === "pass"),
+        hasPending: checks.some((check) => check.bucket === "pending" || check.bucket === "cancel"),
+        hasFailing: checks.some((check) => check.bucket === "fail"),
+      }),
+      mergeConflictDetected: (pr) => pr.mergeStateStatus === "DIRTY",
+    });
+
+    assert.ok(
+      lines.includes(
+        "configured_bot_current_head_signal_wait status=active provider=codex pause_reason=awaiting_current_head_signal_after_required_checks recent_observation=required_checks_green observed_at=2026-03-16T00:10:00.000Z configured_wait_minutes=10 wait_until=2026-03-16T00:20:00.000Z",
+      ),
+    );
+    assert.ok(
+      lines.includes(
+        "review_bot_diagnostics status=missing_provider_signal observed_review=none expected_reviewers=chatgpt-codex-connector next_check=provider_setup_or_delivery",
+      ),
+    );
+    assert.ok(
+      lines.includes(
+        "codex_connector_convergence status=waiting_review provider=codex current_head_sha=deadbeef current_head_observed_at=none latest_signal_head_sha=none highest_severity=none finding_count=0 merge_effect=blocked next_action=wait_for_current_head_signal",
+      ),
+    );
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test("buildDetailedStatusModel explains when CodeRabbit is re-waiting after a draft skip and ready-for-review", () => {
+  const originalNow = Date.now;
+  Date.now = () => Date.parse("2026-03-16T00:00:45.000Z");
+
+  try {
+    const lines = buildDetailedStatusModel({
+      config: createConfig({
+        reviewBotLogins: ["coderabbitai", "coderabbitai[bot]"],
+        configuredBotInitialGraceWaitSeconds: 90,
+      }),
+      activeRecord: createRecord({
+        pr_number: 44,
+        state: "waiting_ci",
+        review_wait_started_at: "2026-03-16T00:00:30.000Z",
+        review_wait_head_sha: "deadbeef",
+        blocked_reason: null,
+        last_error: null,
+      }),
+      latestRecord: null,
+      trackedIssueCount: 1,
+      pr: createPullRequest({
+        currentHeadCiGreenAt: "2026-03-16T00:00:00.000Z",
+        configuredBotCurrentHeadObservedAt: null,
+        configuredBotDraftSkipAt: "2026-03-15T23:59:00.000Z",
+      }),
+      checks: [{ name: "build", state: "SUCCESS", bucket: "pass", workflow: "CI" }],
+      reviewThreads: [],
+      manualReviewThreads,
+      configuredBotReviewThreads,
+      pendingBotReviewThreads: (innerConfig, innerRecord, innerPr, innerReviewThreads) =>
+        configuredBotReviewThreads(innerConfig, innerReviewThreads).filter(
+          (thread) =>
+            !innerRecord.processed_review_thread_ids.includes(thread.id) &&
+            innerRecord.last_head_sha === innerPr.headRefOid,
+        ),
+      summarizeChecks: (checks) => ({
+        allPassing: checks.every((check) => check.bucket === "pass"),
+        hasPending: checks.some((check) => check.bucket === "pending" || check.bucket === "cancel"),
+        hasFailing: checks.some((check) => check.bucket === "fail"),
+      }),
+      mergeConflictDetected: (pr) => pr.mergeStateStatus === "DIRTY",
+    });
+
+    assert.ok(
+      lines.includes(
+        "configured_bot_initial_grace_wait status=active provider=coderabbit pause_reason=awaiting_fresh_provider_review_after_draft_skip recent_observation=ready_for_review_reopened_wait observed_at=2026-03-16T00:00:30.000Z configured_wait_seconds=90 wait_until=2026-03-16T00:02:00.000Z",
+      ),
+    );
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test("buildDetailedStatusModel reports stale provider signal diagnostics with recent observation context", () => {
+  const lines = buildDetailedStatusModel({
+    config: createConfig({
+      reviewBotLogins: ["chatgpt-codex-connector"],
+    }),
+    activeRecord: createRecord({
+      pr_number: 44,
+      state: "waiting_ci",
+      blocked_reason: null,
+      last_error: null,
+      external_review_head_sha: "head-old",
+    }),
+    latestRecord: null,
+    trackedIssueCount: 1,
+    pr: createPullRequest({
+      headRefOid: "head-new",
+      copilotReviewState: "not_requested",
+      copilotReviewRequestedAt: null,
+      copilotReviewArrivedAt: null,
+    }),
+    checks: [{ name: "build", state: "SUCCESS", bucket: "pass", workflow: "CI" }],
+    reviewThreads: [],
+    manualReviewThreads,
+    configuredBotReviewThreads,
+    pendingBotReviewThreads: (innerConfig, innerRecord, innerPr, innerReviewThreads) =>
+      configuredBotReviewThreads(innerConfig, innerReviewThreads).filter(
+        (thread) =>
+          !innerRecord.processed_review_thread_ids.includes(thread.id) &&
+          innerRecord.last_head_sha === innerPr.headRefOid,
+      ),
+    summarizeChecks: (checks) => ({
+      allPassing: checks.every((check) => check.bucket === "pass"),
+      hasPending: checks.some((check) => check.bucket === "pending" || check.bucket === "cancel"),
+      hasFailing: checks.some((check) => check.bucket === "fail"),
+    }),
+    mergeConflictDetected: (pr) => pr.mergeStateStatus === "DIRTY",
+  });
+
+  assert.ok(
+    lines.includes(
+      "review_bot_diagnostics status=stale_provider_signal observed_review=stale_external_review_record expected_reviewers=chatgpt-codex-connector next_check=wait_for_current_head_signal recent_observation=external_review_record:head-old->head-new",
+    ),
+  );
+  assert.ok(
+    lines.includes(
+      "codex_connector_convergence status=stale_head provider=codex current_head_sha=head-new current_head_observed_at=none latest_signal_head_sha=head-old highest_severity=none finding_count=0 merge_effect=blocked next_action=wait_for_current_head_signal",
+    ),
+  );
+});
+
+test("buildDetailedStatusSummaryLines shapes optional summaries and artifact paths", () => {
+  const config = createConfig({
+    localReviewArtifactDir: "/tmp/reviews",
+  });
+  const activeRecord = createRecord({
+    local_review_summary_path: "/tmp/reviews/owner-repo/issue-58/local-review-summary.md",
+    external_review_misses_path: "/tmp/reviews/owner-repo/issue-58/external-review-misses-head-deadbeef.json",
+  });
+  const latestRecoveryRecord = createRecord({
+    issue_number: 91,
+    state: "done",
+    branch: "codex/issue-91",
+    workspace: "/tmp/workspaces/issue-91",
+    updated_at: "2026-03-13T00:20:00Z",
+    last_codex_summary: null,
+    last_recovery_reason: "merged_pr_convergence: tracked PR #191 merged; marked issue #91 done",
+    last_recovery_at: "2026-03-13T00:20:00Z",
+  });
+
+  assert.deepEqual(
+    buildDetailedStatusSummaryLines({
+      config,
+      activeRecord,
+      latestRecoveryRecord,
+      handoffSummary: "blocked\nneeds reproduction",
+      activityContext: {
+        handoffSummary: null,
+        localReviewRoutingSummary: null,
+        changeClassesSummary: null,
+        verificationPolicySummary: null,
+        durableGuardrailSummary: null,
+        externalReviewFollowUpSummary: null,
+        preMergeEvaluation: {
+          status: "blocked",
+          outcome: "fix_blocked",
+          reason: "must_fix_residuals=1",
+          headStatus: "current",
+          summaryPath: "owner-repo/issue-58/local-review-summary.md",
+          artifactPath: "owner-repo/issue-58/local-review-summary.json",
+          ranAt: "2026-03-24T00:11:00Z",
+          mustFixCount: 1,
+          manualReviewCount: 0,
+          followUpCount: 0,
+        },
+        localCiStatus: null,
+        latestRecovery: null,
+        retryContext: {
+          timeoutRetryCount: 0,
+          blockedVerificationRetryCount: 0,
+          repeatedBlockerCount: 0,
+          repeatedFailureSignatureCount: 0,
+          lastFailureSignature: null,
+        },
+        repeatedRecovery: null,
+        recentPhaseChanges: [],
+        localReviewSummaryPath: null,
+        externalReviewMissesPath: null,
+        reviewWaits: [],
+      },
+      localReviewRoutingSummary:
+        "local_review_routing generic=inherit->gpt-5-codex(1) specialists=gpt-5-codex(1) verifier=gpt-5-codex",
+      changeClassesSummary: "change_classes=backend, docs, tests",
+      durableGuardrailSummary: "durable_guardrails verifier=committed:.codex/verifier-guardrails.json#1 external_review=none",
+      externalReviewFollowUpSummary: "external_review_follow_up unresolved=2 actions=durable_guardrail:1|regression_test:1",
+    }),
+    [
+      "handoff_summary=blocked\\nneeds reproduction",
+      "pre_merge_evaluation status=blocked outcome=fix_blocked repair=none head=current must_fix=1 manual_review=0 follow_up=0 reason=must_fix_residuals=1 ran_at=2026-03-24T00:11:00Z summary_path=owner-repo/issue-58/local-review-summary.md artifact_path=owner-repo/issue-58/local-review-summary.json",
+      "local_review_routing generic=inherit->gpt-5-codex(1) specialists=gpt-5-codex(1) verifier=gpt-5-codex",
+      "change_classes=backend, docs, tests",
+      "durable_guardrails verifier=committed:.codex/verifier-guardrails.json#1 external_review=none",
+      "external_review_follow_up unresolved=2 actions=durable_guardrail:1|regression_test:1",
+      "latest_recovery issue=#91 at=2026-03-13T00:20:00Z reason=merged_pr_convergence detail=tracked PR #191 merged; marked issue #91 done",
+      "local_review_summary_path=owner-repo/issue-58/local-review-summary.md",
+      "external_review_misses_path=owner-repo/issue-58/external-review-misses-head-deadbeef.json",
+    ],
+  );
+});
+
+test("buildDetailedStatusModel reports the latest recovery when no active issue is running", () => {
+  const latestRecord = createRecord({
+    issue_number: 92,
+    state: "done",
+    branch: "codex/issue-92",
+    workspace: "/tmp/workspaces/issue-92",
+    updated_at: "2026-03-13T01:20:00Z",
+    last_recovery_reason: null,
+    last_recovery_at: null,
+  });
+  const latestRecoveryRecord = createRecord({
+    issue_number: 91,
+    state: "done",
+    branch: "codex/issue-91",
+    workspace: "/tmp/workspaces/issue-91",
+    updated_at: "2026-03-13T00:20:00Z",
+    last_codex_summary: null,
+    last_recovery_reason: "merged_pr_convergence: tracked PR #191 merged; marked issue #91 done",
+    last_recovery_at: "2026-03-13T00:20:00Z",
+  });
+
+  assert.deepEqual(
+    buildDetailedStatusModel({
+      config: createConfig(),
+      activeRecord: null,
+      latestRecord,
+      latestRecoveryRecord,
+      trackedIssueCount: 2,
+      pr: null,
+      checks: [],
+      reviewThreads: [],
+      manualReviewThreads,
+      configuredBotReviewThreads,
+      pendingBotReviewThreads: () => [],
+      summarizeChecks: () => ({
+        allPassing: true,
+        hasPending: false,
+        hasFailing: false,
+      }),
+      mergeConflictDetected: () => false,
+    }),
+    [
+      "No active issue.",
+      "tracked_issues=2",
+      "latest_record=#92 state=done updated_at=2026-03-13T01:20:00Z",
+      "no_active_tracked_record issue=#92 classification=safe_to_ignore state=done reason=terminal_done",
+      "latest_recovery issue=#91 at=2026-03-13T00:20:00Z reason=merged_pr_convergence detail=tracked PR #191 merged; marked issue #91 done",
+    ],
+  );
+});
+
+test("buildDetailedStatusModel sanitizes failure context summary before emitting it", () => {
+  const lines = buildDetailedStatusModel({
+    config: createConfig(),
+    activeRecord: createRecord({
+      last_error: null,
+      last_failure_context: {
+        category: "blocked",
+        summary: "first line\nsecond line",
+        signature: "two-line-summary",
+        command: null,
+        details: [],
+        url: null,
+        updated_at: "2026-03-11T01:50:41.997Z",
+      },
+    }),
+    latestRecord: null,
+    trackedIssueCount: 1,
+    pr: null,
+    checks: [],
+    reviewThreads: [],
+    manualReviewThreads,
+    configuredBotReviewThreads,
+    pendingBotReviewThreads: () => [],
+    summarizeChecks: () => ({ allPassing: true, hasPending: false, hasFailing: false }),
+    mergeConflictDetected: (pr) => pr.mergeStateStatus === "DIRTY",
+  });
+
+  assert.ok(lines.includes("failure_context category=blocked summary=first line\\nsecond line"));
+});
+
+test("buildDetailedStatusModel counts only unresolved configured bot threads in status fields", () => {
+  const config = createConfig({
+    reviewBotLogins: ["coderabbitai[bot]"],
+  });
+  const pr = createPullRequest({
+    reviewDecision: "CHANGES_REQUESTED",
+    headRefName: "codex/issue-38",
+    copilotReviewState: "arrived",
+    copilotReviewRequestedAt: "2026-03-11T14:05:00Z",
+    copilotReviewArrivedAt: "2026-03-11T14:06:00Z",
+    configuredBotTopLevelReviewStrength: "nitpick_only",
+    configuredBotTopLevelReviewSubmittedAt: "2026-03-11T14:06:00Z",
+  });
+  const resolvedBotThread: ReviewThread = {
+    id: "thread-1",
+    isResolved: true,
+    isOutdated: false,
+    path: "src/file.ts",
+    line: 12,
+    comments: {
+      nodes: [
+        {
+          id: "comment-1",
+          body: "Resolved.",
+          createdAt: "2026-03-11T00:00:00Z",
+          url: "https://example.test/pr/44#discussion_r1",
+          author: {
+            login: "coderabbitai[bot]",
+            typeName: "Bot",
+          },
+        },
+      ],
+    },
+  };
+
+  const lines = buildDetailedStatusModel({
+    config,
+    activeRecord: createRecord({
+      pr_number: 44,
+      state: "ready_to_merge",
+      last_error: null,
+      last_failure_context: null,
+    }),
+    latestRecord: null,
+    trackedIssueCount: 1,
+    pr,
+    checks: [{ name: "build", state: "SUCCESS", bucket: "pass", workflow: "CI" }],
+    reviewThreads: [resolvedBotThread],
+    manualReviewThreads,
+    configuredBotReviewThreads,
+    pendingBotReviewThreads: () => [],
+    summarizeChecks: () => ({ allPassing: true, hasPending: false, hasFailing: false }),
+    mergeConflictDetected: (pr) => pr.mergeStateStatus === "DIRTY",
+  });
+
+  assert.ok(
+    lines.includes(
+      "configured_bot_top_level_review strength=nitpick_only submitted_at=2026-03-11T14:06:00Z effect=softened",
+    ),
+  );
+  assert.ok(lines.includes("review_threads bot_pending=0 bot_unresolved=0 bot_effective_unresolved=0 bot_outdated_unresolved=0 manual=0"));
+});
+
+test("buildDetailedStatusModel names conversation-resolution blockers from outdated configured-bot threads", () => {
+  const config = createConfig({
+    reviewBotLogins: ["chatgpt-codex-connector"],
+  });
+  const pr = createPullRequest({
+    mergeStateStatus: "BLOCKED",
+    mergeable: "MERGEABLE",
+    reviewDecision: null,
+    configuredBotCurrentHeadObservedAt: "2026-05-18T01:00:00Z",
+    configuredBotCurrentHeadStatusState: "SUCCESS",
+    configuredBotTopLevelReviewStrength: null,
+  });
+  const reviewThreads: ReviewThread[] = [
+    {
+      id: "thread-outdated-1",
+      isResolved: false,
+      isOutdated: true,
+      path: "src/file.ts",
+      line: 12,
+      comments: {
+        nodes: [
+          {
+            id: "comment-outdated-1",
+            body: "Outdated Codex thread.",
+            createdAt: "2026-05-18T00:50:00Z",
+            url: "https://example.test/pr/44#discussion_r1",
+            author: {
+              login: "chatgpt-codex-connector",
+              typeName: "Bot",
+            },
+          },
+        ],
+      },
+    },
+  ];
+
+  const lines = buildDetailedStatusModel({
+    config,
+    activeRecord: createRecord({
+      pr_number: 44,
+      state: "pr_open",
+      last_error: null,
+      last_failure_context: null,
+    }),
+    latestRecord: null,
+    trackedIssueCount: 1,
+    pr,
+    checks: [{ name: "verify-pre-pr", state: "SUCCESS", bucket: "pass", workflow: "CI" }],
+    reviewThreads,
+    manualReviewThreads,
+    configuredBotReviewThreads,
+    pendingBotReviewThreads: () => [],
+    summarizeChecks: () => ({ allPassing: true, hasPending: false, hasFailing: false }),
+    mergeConflictDetected: (pr) => pr.mergeStateStatus === "DIRTY",
+  });
+
+  assert.ok(lines.includes("review_threads bot_pending=0 bot_unresolved=0 bot_effective_unresolved=0 bot_outdated_unresolved=1 manual=0"));
+  assert.ok(
+    lines.includes(
+      "conversation_resolution_blocker state=blocked required_conversation_resolution=unknown outdated_configured_bot_threads=1 thread_ids=thread-outdated-1",
+    ),
+  );
+});
+
+test("buildDetailedStatusModel includes enabled conversation-resolution policy evidence", () => {
+  const config = createConfig({
+    reviewBotLogins: ["chatgpt-codex-connector"],
+  });
+  const pr = createPullRequest({
+    mergeStateStatus: "BLOCKED",
+    mergeable: "MERGEABLE",
+    reviewDecision: null,
+    configuredBotCurrentHeadObservedAt: "2026-05-18T01:00:00Z",
+    configuredBotCurrentHeadStatusState: "SUCCESS",
+    configuredBotTopLevelReviewStrength: null,
+    requiredConversationResolution: {
+      state: "enabled",
+      source: "branch_protection",
+      details: ["branch_protection=enabled"],
+    },
+  });
+  const reviewThreads: ReviewThread[] = [
+    {
+      id: "thread-outdated-1",
+      isResolved: false,
+      isOutdated: true,
+      path: "src/file.ts",
+      line: 12,
+      comments: {
+        nodes: [
+          {
+            id: "comment-outdated-1",
+            body: "Outdated Codex thread.",
+            createdAt: "2026-05-18T00:50:00Z",
+            url: "https://example.test/pr/44#discussion_r1",
+            author: {
+              login: "chatgpt-codex-connector",
+              typeName: "Bot",
+            },
+          },
+        ],
+      },
+    },
+  ];
+
+  const lines = buildDetailedStatusModel({
+    config,
+    activeRecord: createRecord({
+      pr_number: 44,
+      state: "pr_open",
+      last_error: null,
+      last_failure_context: null,
+    }),
+    latestRecord: null,
+    trackedIssueCount: 1,
+    pr,
+    checks: [{ name: "verify-pre-pr", state: "SUCCESS", bucket: "pass", workflow: "CI" }],
+    reviewThreads,
+    manualReviewThreads,
+    configuredBotReviewThreads,
+    pendingBotReviewThreads: () => [],
+    summarizeChecks: () => ({ allPassing: true, hasPending: false, hasFailing: false }),
+    mergeConflictDetected: (pr) => pr.mergeStateStatus === "DIRTY",
+  });
+
+  assert.ok(
+    lines.includes(
+      "conversation_resolution_blocker state=blocked required_conversation_resolution=enabled outdated_configured_bot_threads=1 thread_ids=thread-outdated-1",
+    ),
+  );
+});
+
+test("buildDetailedStatusModel does not name conversation-resolution blocker when latest thread author is not configured bot", () => {
+  const config = createConfig({
+    reviewBotLogins: ["chatgpt-codex-connector"],
+  });
+  const pr = createPullRequest({
+    mergeStateStatus: "BLOCKED",
+    mergeable: "MERGEABLE",
+    reviewDecision: null,
+    configuredBotCurrentHeadObservedAt: "2026-05-18T01:00:00Z",
+    configuredBotCurrentHeadStatusState: "SUCCESS",
+    configuredBotTopLevelReviewStrength: null,
+  });
+  const reviewThreads: ReviewThread[] = [
+    {
+      id: "thread-human-latest",
+      isResolved: false,
+      isOutdated: true,
+      path: "src/file.ts",
+      line: 12,
+      comments: {
+        nodes: [
+          {
+            id: "comment-bot-1",
+            body: "Outdated Codex thread.",
+            createdAt: "2026-05-18T00:50:00Z",
+            url: "https://example.test/pr/44#discussion_r1",
+            author: {
+              login: "chatgpt-codex-connector",
+              typeName: "Bot",
+            },
+          },
+          {
+            id: "comment-human-1",
+            body: "This still needs a human decision.",
+            createdAt: "2026-05-18T00:55:00Z",
+            url: "https://example.test/pr/44#discussion_r2",
+            author: {
+              login: "octocat",
+              typeName: "User",
+            },
+          },
+        ],
+      },
+    },
+  ];
+
+  const lines = buildDetailedStatusModel({
+    config,
+    activeRecord: createRecord({
+      pr_number: 44,
+      state: "pr_open",
+      last_error: null,
+      last_failure_context: null,
+    }),
+    latestRecord: null,
+    trackedIssueCount: 1,
+    pr,
+    checks: [{ name: "verify-pre-pr", state: "SUCCESS", bucket: "pass", workflow: "CI" }],
+    reviewThreads,
+    manualReviewThreads,
+    configuredBotReviewThreads,
+    pendingBotReviewThreads: () => [],
+    summarizeChecks: () => ({ allPassing: true, hasPending: false, hasFailing: false }),
+    mergeConflictDetected: (pr) => pr.mergeStateStatus === "DIRTY",
+  });
+
+  assert.ok(lines.includes("review_threads bot_pending=0 bot_unresolved=0 bot_effective_unresolved=0 bot_outdated_unresolved=1 manual=0"));
+  assert.equal(lines.some((line) => line.startsWith("conversation_resolution_blocker ")), false);
+});

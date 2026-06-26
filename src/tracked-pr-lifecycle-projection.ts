@@ -1,0 +1,338 @@
+import type {
+  BlockedReason,
+  GitHubPullRequest,
+  IssueRunRecord,
+  PullRequestCheck,
+  ReviewThread,
+  RunState,
+  SupervisorConfig,
+} from "./core/types";
+import {
+  inferStateFromPullRequest,
+  syncMergeLatencyVisibility,
+} from "./pull-request-state";
+import {
+  syncCodexConnectorReviewRequestObservation,
+  syncCopilotReviewRequestObservation,
+  syncCopilotReviewTimeoutState,
+  syncReviewWaitWindow,
+} from "./pull-request-state-sync";
+import { blockedReasonForLifecycleState } from "./supervisor/supervisor-lifecycle";
+
+interface ProjectTrackedPrLifecycleArgs {
+  config: SupervisorConfig;
+  record: IssueRunRecord;
+  pr: GitHubPullRequest;
+  checks: PullRequestCheck[];
+  reviewThreads: ReviewThread[];
+  inferStateFromPullRequest?: typeof inferStateFromPullRequest;
+  blockedReasonForLifecycleState?: typeof blockedReasonForLifecycleState;
+  syncReviewWaitWindow?: typeof syncReviewWaitWindow;
+  syncCodexConnectorReviewRequestObservation?: typeof syncCodexConnectorReviewRequestObservation;
+  syncCopilotReviewRequestObservation?: typeof syncCopilotReviewRequestObservation;
+  syncCopilotReviewTimeoutState?: typeof syncCopilotReviewTimeoutState;
+  syncMergeLatencyVisibility?: typeof syncMergeLatencyVisibility;
+}
+
+export interface TrackedPrLifecycleProjection {
+  recordForState: IssueRunRecord;
+  reviewWaitPatch: Partial<IssueRunRecord>;
+  copilotReviewRequestObservationPatch: Partial<IssueRunRecord>;
+  codexConnectorReviewRequestObservationPatch: Pick<
+    IssueRunRecord,
+    "codex_connector_review_requested_observed_at" | "codex_connector_review_requested_head_sha"
+  >;
+  copilotReviewTimeoutPatch: Pick<
+    IssueRunRecord,
+    "copilot_review_timed_out_at" | "copilot_review_timeout_action" | "copilot_review_timeout_reason"
+  >;
+  mergeLatencyVisibilityPatch: Pick<
+    IssueRunRecord,
+    "provider_success_observed_at" | "provider_success_head_sha" | "merge_readiness_last_evaluated_at"
+  >;
+  nextState: RunState;
+  nextBlockedReason: BlockedReason | null;
+  shouldSuppressRecovery: boolean;
+}
+
+function processedReviewThreadIdsStaleForHead(
+  processedThreadIds: readonly string[],
+  nextHeadSha: string,
+): boolean {
+  return processedThreadIds.some((key) => key.includes("@") && !key.endsWith(`@${nextHeadSha}`));
+}
+
+function filterProcessedReviewThreadIdsForHead(
+  processedThreadIds: readonly string[],
+  nextHeadSha: string,
+): string[] {
+  return processedThreadIds.filter((key) => !key.includes("@") || key.endsWith(`@${nextHeadSha}`));
+}
+
+function processedReviewThreadFingerprintsStaleForHead(
+  processedThreadFingerprints: readonly string[],
+  nextHeadSha: string,
+): boolean {
+  return processedThreadFingerprints.some((key) => {
+    const fingerprintSeparator = key.indexOf("#");
+    const threadKey = fingerprintSeparator >= 0 ? key.slice(0, fingerprintSeparator) : key;
+    return threadKey.includes("@") && !threadKey.endsWith(`@${nextHeadSha}`);
+  });
+}
+
+function filterProcessedReviewThreadFingerprintsForHead(
+  processedThreadFingerprints: readonly string[],
+  nextHeadSha: string,
+): string[] {
+  return processedThreadFingerprints.filter((key) => {
+    const fingerprintSeparator = key.indexOf("#");
+    const threadKey = fingerprintSeparator >= 0 ? key.slice(0, fingerprintSeparator) : key;
+    return !threadKey.includes("@") || threadKey.endsWith(`@${nextHeadSha}`);
+  });
+}
+
+export function resetTrackedPrHeadScopedStateOnAdvance(
+  record: IssueRunRecord,
+  nextHeadSha: string,
+): Partial<IssueRunRecord> {
+  const localReviewHeadStale =
+    record.local_review_head_sha != null && record.local_review_head_sha !== nextHeadSha;
+  const externalReviewHeadStale =
+    record.external_review_head_sha != null && record.external_review_head_sha !== nextHeadSha;
+  const reviewFollowUpHeadStale =
+    record.review_follow_up_head_sha != null && record.review_follow_up_head_sha !== nextHeadSha;
+  const blockerCommentHeadStale =
+    record.last_host_local_pr_blocker_comment_head_sha != null
+    && record.last_host_local_pr_blocker_comment_head_sha !== nextHeadSha;
+  const observedHostLocalBlockerHeadStale =
+    record.last_observed_host_local_pr_blocker_head_sha != null
+    && record.last_observed_host_local_pr_blocker_head_sha !== nextHeadSha;
+  const localCiHeadStale =
+    record.latest_local_ci_result?.head_sha != null
+    && record.latest_local_ci_result.head_sha !== nextHeadSha;
+  const providerSuccessHeadStale =
+    record.provider_success_head_sha != null
+    && record.provider_success_head_sha !== nextHeadSha;
+  const codexConnectorReviewRequestHeadStale =
+    record.codex_connector_review_requested_head_sha != null
+    && record.codex_connector_review_requested_head_sha !== nextHeadSha;
+  const codexConnectorReviewRequestRetryHeadStale =
+    record.codex_connector_review_request_retry_head_sha != null
+    && record.codex_connector_review_request_retry_head_sha !== nextHeadSha;
+  const processedThreadIdsHeadStale = processedReviewThreadIdsStaleForHead(
+    record.processed_review_thread_ids ?? [],
+    nextHeadSha,
+  );
+  const processedThreadFingerprintsHeadStale = processedReviewThreadFingerprintsStaleForHead(
+    record.processed_review_thread_fingerprints ?? [],
+    nextHeadSha,
+  );
+  const currentHeadProcessedThreadIds = filterProcessedReviewThreadIdsForHead(
+    record.processed_review_thread_ids ?? [],
+    nextHeadSha,
+  );
+  const currentHeadProcessedThreadFingerprints = filterProcessedReviewThreadFingerprintsForHead(
+    record.processed_review_thread_fingerprints ?? [],
+    nextHeadSha,
+  );
+  const headScopedStateDiverged =
+    localReviewHeadStale
+    || externalReviewHeadStale
+    || reviewFollowUpHeadStale
+    || blockerCommentHeadStale
+    || observedHostLocalBlockerHeadStale
+    || localCiHeadStale
+    || providerSuccessHeadStale
+    || codexConnectorReviewRequestHeadStale
+    || codexConnectorReviewRequestRetryHeadStale
+    || processedThreadIdsHeadStale
+    || processedThreadFingerprintsHeadStale;
+  const sameTrackedHead = record.last_head_sha === nextHeadSha;
+
+  if (sameTrackedHead && !headScopedStateDiverged) {
+    return {};
+  }
+
+  if (
+    sameTrackedHead
+    && !localReviewHeadStale
+    && !externalReviewHeadStale
+    && !reviewFollowUpHeadStale
+    && (
+      (!processedThreadIdsHeadStale && !processedThreadFingerprintsHeadStale) ||
+      currentHeadProcessedThreadIds.length > 0 ||
+      currentHeadProcessedThreadFingerprints.length > 0
+    )
+  ) {
+    return {
+      ...(processedThreadIdsHeadStale
+        ? {
+            processed_review_thread_ids: currentHeadProcessedThreadIds,
+          }
+        : {}),
+      ...(processedThreadFingerprintsHeadStale
+        ? {
+            processed_review_thread_fingerprints: currentHeadProcessedThreadFingerprints,
+          }
+        : {}),
+      ...(localCiHeadStale ? { latest_local_ci_result: null } : {}),
+      ...(providerSuccessHeadStale
+        ? {
+            provider_success_observed_at: null,
+            provider_success_head_sha: null,
+          }
+        : {}),
+      ...(codexConnectorReviewRequestHeadStale
+        ? {
+            codex_connector_review_requested_observed_at: null,
+            codex_connector_review_requested_head_sha: null,
+            codex_connector_review_request_comment_identity_status: null,
+            codex_connector_review_request_comment_database_id: null,
+            codex_connector_review_request_comment_node_id: null,
+            codex_connector_review_request_comment_url: null,
+          }
+        : {}),
+      ...(codexConnectorReviewRequestRetryHeadStale
+        ? {
+            codex_connector_review_request_retry_count: 0,
+            codex_connector_review_request_retry_head_sha: null,
+            codex_connector_review_request_last_retried_at: null,
+            codex_connector_review_request_comment_identity_status: null,
+            codex_connector_review_request_comment_database_id: null,
+            codex_connector_review_request_comment_node_id: null,
+            codex_connector_review_request_comment_url: null,
+          }
+        : {}),
+      ...(observedHostLocalBlockerHeadStale
+        ? {
+            last_observed_host_local_pr_blocker_signature: null,
+            last_observed_host_local_pr_blocker_head_sha: null,
+          }
+        : {}),
+      ...(blockerCommentHeadStale
+        ? {
+            last_host_local_pr_blocker_comment_signature: null,
+            last_host_local_pr_blocker_comment_head_sha: null,
+          }
+        : {}),
+    };
+  }
+
+  return {
+    local_review_head_sha: null,
+    local_review_blocker_summary: null,
+    local_review_summary_path: null,
+    local_review_run_at: null,
+    local_review_max_severity: null,
+    local_review_findings_count: 0,
+    local_review_root_cause_count: 0,
+    local_review_verified_max_severity: null,
+    local_review_verified_findings_count: 0,
+    local_review_recommendation: null,
+    local_review_degraded: false,
+    pre_merge_evaluation_outcome: null,
+    pre_merge_must_fix_count: 0,
+    pre_merge_manual_review_count: 0,
+    pre_merge_follow_up_count: 0,
+    last_local_review_signature: null,
+    repeated_local_review_signature_count: 0,
+    latest_local_ci_result: null,
+    provider_success_observed_at: null,
+    provider_success_head_sha: null,
+    external_review_head_sha: null,
+    external_review_misses_path: null,
+    external_review_matched_findings_count: 0,
+    external_review_near_match_findings_count: 0,
+    external_review_missed_findings_count: 0,
+    review_follow_up_head_sha: null,
+    review_follow_up_remaining: 0,
+    codex_connector_review_requested_observed_at: null,
+    codex_connector_review_requested_head_sha: null,
+    codex_connector_review_request_retry_count: 0,
+    codex_connector_review_request_retry_head_sha: null,
+    codex_connector_review_request_last_retried_at: null,
+    codex_connector_review_request_comment_identity_status: null,
+    codex_connector_review_request_comment_database_id: null,
+    codex_connector_review_request_comment_node_id: null,
+    codex_connector_review_request_comment_url: null,
+    last_observed_host_local_pr_blocker_signature: null,
+    last_observed_host_local_pr_blocker_head_sha: null,
+    last_host_local_pr_blocker_comment_signature: null,
+    last_host_local_pr_blocker_comment_head_sha: null,
+    processed_review_thread_ids: [],
+    processed_review_thread_fingerprints: [],
+  };
+}
+
+export function projectTrackedPrLifecycle(args: ProjectTrackedPrLifecycleArgs): TrackedPrLifecycleProjection {
+  const inferStateFromPullRequestImpl = args.inferStateFromPullRequest ?? inferStateFromPullRequest;
+  const blockedReasonForLifecycleStateImpl = args.blockedReasonForLifecycleState ?? blockedReasonForLifecycleState;
+  const syncReviewWaitWindowImpl = args.syncReviewWaitWindow ?? syncReviewWaitWindow;
+  const syncCodexConnectorReviewRequestObservationImpl =
+    args.syncCodexConnectorReviewRequestObservation ?? syncCodexConnectorReviewRequestObservation;
+  const syncCopilotReviewRequestObservationImpl =
+    args.syncCopilotReviewRequestObservation ?? syncCopilotReviewRequestObservation;
+  const syncCopilotReviewTimeoutStateImpl =
+    args.syncCopilotReviewTimeoutState ?? syncCopilotReviewTimeoutState;
+  const syncMergeLatencyVisibilityImpl =
+    args.syncMergeLatencyVisibility ?? syncMergeLatencyVisibility;
+  const headAdvanceResetPatch = resetTrackedPrHeadScopedStateOnAdvance(args.record, args.pr.headRefOid);
+
+  const projectionSeedRecord: IssueRunRecord = {
+    ...args.record,
+    ...headAdvanceResetPatch,
+    pr_number: args.pr.number,
+    last_head_sha: args.pr.headRefOid,
+  };
+  const reviewWaitPatch = syncReviewWaitWindowImpl(projectionSeedRecord, args.pr);
+  const copilotReviewRequestObservationPatch = syncCopilotReviewRequestObservationImpl(
+    args.config,
+    projectionSeedRecord,
+    args.pr,
+  );
+  const codexConnectorReviewRequestObservationPatch = syncCodexConnectorReviewRequestObservationImpl(
+    projectionSeedRecord,
+    args.pr,
+  );
+  const copilotReviewTimeoutPatch = syncCopilotReviewTimeoutStateImpl(args.config, projectionSeedRecord, args.pr);
+  const recordForVisibility: IssueRunRecord = {
+    ...projectionSeedRecord,
+    ...reviewWaitPatch,
+    ...codexConnectorReviewRequestObservationPatch,
+    ...copilotReviewRequestObservationPatch,
+    ...copilotReviewTimeoutPatch,
+  };
+  const mergeLatencyVisibilityPatch = syncMergeLatencyVisibilityImpl(
+    args.config,
+    recordForVisibility,
+    args.pr,
+    args.checks,
+    args.reviewThreads,
+  );
+  const recordForState: IssueRunRecord = {
+    ...recordForVisibility,
+    ...mergeLatencyVisibilityPatch,
+  };
+  const nextState = inferStateFromPullRequestImpl(
+    args.config,
+    recordForState,
+    args.pr,
+    args.checks,
+    args.reviewThreads,
+  );
+
+  return {
+    recordForState,
+    reviewWaitPatch,
+    copilotReviewRequestObservationPatch,
+    codexConnectorReviewRequestObservationPatch,
+    copilotReviewTimeoutPatch,
+    mergeLatencyVisibilityPatch,
+    nextState,
+    nextBlockedReason:
+      nextState === "blocked"
+        ? blockedReasonForLifecycleStateImpl(args.config, recordForVisibility, args.pr, args.checks, args.reviewThreads)
+        : null,
+    shouldSuppressRecovery: nextState === "failed",
+  };
+}

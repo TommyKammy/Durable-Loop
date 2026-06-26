@@ -1,0 +1,574 @@
+import { GitHubClient } from "../github";
+import { DEFAULT_CANDIDATE_DISCOVERY_FETCH_WINDOW } from "../core/config";
+import { configuredReviewProviderKinds } from "../core/review-providers";
+import {
+  findBlockingIssue,
+  findHighRiskBlockingAmbiguity,
+  hasAvailableIssueLabels,
+  isRecordDoneForSequencing,
+  LABEL_GATED_POLICY_MISSING_LABELS_BLOCKED_BY,
+  lintExecutionReadyIssueBody,
+  parseIssueMetadata,
+} from "../issue-metadata";
+import {
+  formatExecutionReadyMissingFields,
+  isEligibleForSelection,
+  shouldEnforceExecutionReady,
+} from "./supervisor-execution-policy";
+import {
+  evaluateAutonomousExecutionTrust,
+  isAutonomousExecutionTrustBlockedRecord,
+} from "./supervisor-trust-gate";
+import {
+  CandidateDiscoveryDiagnostics,
+  GitHubIssue,
+  SupervisorConfig,
+  SupervisorStateFile,
+} from "../core/types";
+import { formatSelectionReason } from "./supervisor-selection-issue-explain";
+import {
+  formatInventoryRefreshStatusLine,
+  formatLastSuccessfulInventorySnapshotStatusLine,
+} from "../inventory-refresh-state";
+import {
+  findLatestBlockedPreservedPartialWorkIncident,
+  formatBlockedPreservedPartialWorkLine,
+} from "./supervisor-preserved-partial-work";
+import {
+  findLatestMergedPrConvergenceRecord,
+  formatMergedPrConvergenceOperatorEventLine,
+} from "./supervisor-operator-events";
+import { codexConnectorReviewRequestAction } from "../codex-connector-review-request-decision";
+import { shouldSelectCodexConnectorValidReviewRepair } from "../codex-connector-valid-review-repair-selection";
+import { configuredBotReviewThreads, manualReviewThreads } from "../review-thread-reporting";
+import { mergeConflictDetected, summarizeChecks } from "./supervisor-reporting";
+
+type ReadinessSummaryGitHub =
+  Pick<GitHubClient, "listAllIssues" | "listCandidateIssues">
+  & Partial<Pick<GitHubClient, "getCandidateDiscoveryDiagnostics" | "getPullRequestIfExists" | "getChecks" | "getUnresolvedReviewThreads">>;
+type SelectionWhyGitHub = Pick<GitHubClient, "listAllIssues" | "listCandidateIssues"> &
+  Partial<Pick<GitHubClient, "getPullRequestIfExists" | "getChecks" | "getUnresolvedReviewThreads">>;
+
+export interface SupervisorSelectionSummaryDto {
+  selectedIssueNumber: number | null;
+  selectionReason: string | null;
+}
+
+async function shouldSelectCodexConnectorReviewRequestRecovery(
+  github: SelectionWhyGitHub,
+  config: SupervisorConfig,
+  record: SupervisorStateFile["issues"][string] | undefined,
+): Promise<boolean> {
+  if (
+    !record ||
+    record.state !== "blocked" ||
+    (record.blocked_reason !== "manual_review" && record.blocked_reason !== "stale_review_bot") ||
+    record.pr_number === null ||
+    !configuredReviewProviderKinds(config).includes("codex") ||
+    config.configuredBotCurrentHeadSignalTimeoutAction !== "request_review_comment" ||
+    !github.getPullRequestIfExists ||
+    !github.getChecks ||
+    !github.getUnresolvedReviewThreads
+  ) {
+    return false;
+  }
+
+  try {
+    const pr = await github.getPullRequestIfExists(record.pr_number, { purpose: "status" });
+    if (!pr || pr.headRefName !== record.branch) {
+      return false;
+    }
+
+    const [checks, reviewThreads] = await Promise.all([
+      github.getChecks(pr.number),
+      github.getUnresolvedReviewThreads(pr.number),
+    ]);
+    return codexConnectorReviewRequestAction({
+      config,
+      record,
+      pr,
+      checks,
+      reviewThreads,
+      summarizeChecks,
+      configuredBotReviewThreads,
+      manualReviewThreads,
+      mergeConflictDetected,
+    }).kind !== "none";
+  } catch {
+    return false;
+  }
+}
+
+async function findCodexConnectorReviewRequestRecoveryIssueNumbers(
+  github: SelectionWhyGitHub,
+  config: SupervisorConfig,
+  state: SupervisorStateFile,
+  candidateIssues: GitHubIssue[],
+): Promise<ReadonlySet<number>> {
+  const recoveryIssueNumbers = new Set<number>();
+  for (const issue of candidateIssues) {
+    if (await shouldSelectCodexConnectorReviewRequestRecovery(github, config, state.issues[String(issue.number)])) {
+      recoveryIssueNumbers.add(issue.number);
+    }
+  }
+
+  return recoveryIssueNumbers;
+}
+
+async function findCodexConnectorValidReviewRepairIssueNumbers(
+  github: SelectionWhyGitHub,
+  config: SupervisorConfig,
+  state: SupervisorStateFile,
+  candidateIssues: GitHubIssue[],
+): Promise<ReadonlySet<number>> {
+  const repairIssueNumbers = new Set<number>();
+  for (const issue of candidateIssues) {
+    if (
+      await shouldSelectCodexConnectorValidReviewRepair({
+        config,
+        record: state.issues[String(issue.number)],
+        getPullRequestIfExists: github.getPullRequestIfExists
+          ? (prNumber, options) => github.getPullRequestIfExists!(prNumber, options)
+          : undefined,
+        getChecks: github.getChecks
+          ? (prNumber) => github.getChecks!(prNumber)
+          : undefined,
+        getUnresolvedReviewThreads: github.getUnresolvedReviewThreads
+          ? (prNumber) => github.getUnresolvedReviewThreads!(prNumber)
+          : undefined,
+      })
+    ) {
+      repairIssueNumbers.add(issue.number);
+    }
+  }
+
+  return repairIssueNumbers;
+}
+
+export interface SupervisorCandidateDiscoveryDto {
+  fetchWindow: number;
+  strategy: "paginated";
+  truncated: boolean;
+  observedMatchingOpenIssues: number | null;
+  warning: string | null;
+}
+
+export interface SupervisorRunnableIssueDto {
+  issueNumber: number;
+  title: string;
+  readiness: string;
+}
+
+export interface SupervisorBlockedIssueDto {
+  issueNumber: number;
+  title: string;
+  blockedBy: string;
+}
+
+export interface SupervisorReadinessSummaryDto {
+  runnableIssues: SupervisorRunnableIssueDto[];
+  blockedIssues: SupervisorBlockedIssueDto[];
+  readinessLines: string[];
+}
+
+export function formatCandidateDiscoveryBehaviorLine(
+  config: Pick<SupervisorConfig, "candidateDiscoveryFetchWindow">,
+  prefix = "candidate_discovery",
+): string {
+  const fetchWindow = config.candidateDiscoveryFetchWindow ?? DEFAULT_CANDIDATE_DISCOVERY_FETCH_WINDOW;
+  return `${prefix} fetch_window=${fetchWindow} strategy=paginated`;
+}
+
+export function formatCandidateDiscoveryStatusLine(
+  diagnostics: CandidateDiscoveryDiagnostics | null,
+): string | null {
+  if (!diagnostics?.truncated) {
+    return null;
+  }
+
+  return [
+    "candidate_discovery_warning=matching_open_issues_exceed_first_page_window",
+    `fetch_window=${diagnostics.fetchWindow}`,
+    `observed_matching_open_issues=${diagnostics.observedMatchingOpenIssues}+`,
+    "runnable_selection_incomplete=yes",
+  ].join(" ");
+}
+
+export function formatCandidateDiscoveryWarningDetail(
+  diagnostics: CandidateDiscoveryDiagnostics | null,
+): string | null {
+  if (!diagnostics?.truncated) {
+    return null;
+  }
+
+  return `Candidate discovery may be truncated: more than ${diagnostics.fetchWindow} matching open issues exceed the current first-page fetch window, so runnable selection may be incomplete.`;
+}
+
+export function buildCandidateDiscoverySummary(
+  config: Pick<SupervisorConfig, "candidateDiscoveryFetchWindow">,
+  diagnostics: CandidateDiscoveryDiagnostics | null,
+): SupervisorCandidateDiscoveryDto {
+  const fetchWindow = diagnostics?.fetchWindow ?? (
+    config.candidateDiscoveryFetchWindow ?? DEFAULT_CANDIDATE_DISCOVERY_FETCH_WINDOW
+  );
+  return {
+    fetchWindow,
+    strategy: "paginated",
+    truncated: diagnostics?.truncated ?? false,
+    observedMatchingOpenIssues: diagnostics?.observedMatchingOpenIssues ?? null,
+    warning: formatCandidateDiscoveryWarningDetail(diagnostics),
+  };
+}
+
+export async function buildReadinessSummary(
+  github: ReadinessSummaryGitHub,
+  config: SupervisorConfig,
+  state: SupervisorStateFile,
+  candidateDiscoveryDiagnostics: CandidateDiscoveryDiagnostics | null | undefined = undefined,
+): Promise<SupervisorReadinessSummaryDto> {
+  const inventoryRefreshStatusLine = formatInventoryRefreshStatusLine(state.inventory_refresh_failure);
+  if (inventoryRefreshStatusLine !== null) {
+    const snapshotSummary = buildLastKnownGoodSnapshotReadinessSummary(config, state);
+    return {
+      runnableIssues: snapshotSummary?.runnableIssues ?? [],
+      blockedIssues: snapshotSummary?.blockedIssues ?? [],
+      readinessLines: [
+        inventoryRefreshStatusLine,
+        "selection_reason=inventory_refresh_degraded",
+        ...(snapshotSummary?.readinessLines ?? []),
+      ],
+    };
+  }
+
+  const diagnostics =
+    candidateDiscoveryDiagnostics === undefined
+      ? typeof github.getCandidateDiscoveryDiagnostics === "function"
+        ? await github.getCandidateDiscoveryDiagnostics()
+        : null
+      : candidateDiscoveryDiagnostics;
+  const candidateDiscoveryWarningLine = formatCandidateDiscoveryStatusLine(diagnostics);
+  const candidateIssues = await github.listCandidateIssues();
+  const issues = await github.listAllIssues();
+  const recoveryIssueNumbers = await findCodexConnectorReviewRequestRecoveryIssueNumbers(github, config, state, candidateIssues);
+  const validReviewRepairIssueNumbers = await findCodexConnectorValidReviewRepairIssueNumbers(
+    github,
+    config,
+    state,
+    candidateIssues,
+  );
+  return buildReadinessSummaryFromIssues(
+    config,
+    state,
+    candidateIssues,
+    issues,
+    candidateDiscoveryWarningLine,
+    [],
+    recoveryIssueNumbers,
+    validReviewRepairIssueNumbers,
+  );
+}
+
+export function buildLastKnownGoodSnapshotReadinessSummary(
+  config: SupervisorConfig,
+  state: SupervisorStateFile,
+): SupervisorReadinessSummaryDto | null {
+  const snapshot = state.last_successful_inventory_snapshot;
+  if (!snapshot) {
+    return null;
+  }
+
+  const snapshotStatusLine = formatLastSuccessfulInventorySnapshotStatusLine(snapshot);
+  return buildReadinessSummaryFromIssues(
+    config,
+    state,
+    snapshot.issues,
+    snapshot.issues,
+    null,
+    snapshotStatusLine === null ? [] : [snapshotStatusLine],
+  );
+}
+
+function buildReadinessSummaryFromIssues(
+  config: SupervisorConfig,
+  state: SupervisorStateFile,
+  candidateIssues: GitHubIssue[],
+  issues: GitHubIssue[],
+  candidateDiscoveryWarningLine: string | null,
+  prefixedReadinessLines: string[] = [],
+  codexConnectorReviewRequestRecoveryIssueNumbers: ReadonlySet<number> = new Set(),
+  codexConnectorValidReviewRepairIssueNumbers: ReadonlySet<number> = new Set(),
+): SupervisorReadinessSummaryDto {
+  const runnableIssues: SupervisorRunnableIssueDto[] = [];
+  const blockedIssues: SupervisorBlockedIssueDto[] = [];
+
+  for (const issue of candidateIssues) {
+    if (config.skipTitlePrefixes.some((prefix) => issue.title.startsWith(prefix))) {
+      continue;
+    }
+
+    const existing = state.issues[String(issue.number)];
+    if (!hasAvailableIssueLabels(issue)) {
+      blockedIssues.push({
+        issueNumber: issue.number,
+        title: issue.title,
+        blockedBy: LABEL_GATED_POLICY_MISSING_LABELS_BLOCKED_BY,
+      });
+      continue;
+    }
+
+    const readiness = lintExecutionReadyIssueBody(issue);
+    if (shouldEnforceExecutionReady(existing) && !readiness.isExecutionReady) {
+      blockedIssues.push({
+        issueNumber: issue.number,
+        title: issue.title,
+        blockedBy: `requirements:${formatExecutionReadyMissingFields(readiness.missingRequired)}`,
+      });
+      continue;
+    }
+
+    const clarificationBlock = findHighRiskBlockingAmbiguity(issue);
+    if (clarificationBlock) {
+      blockedIssues.push({
+        issueNumber: issue.number,
+        title: issue.title,
+        blockedBy: `clarification:${clarificationBlock.ambiguityClasses.join("|")}:${clarificationBlock.riskyChangeClasses.join("|")}`,
+      });
+      continue;
+    }
+
+    const trustDecision = evaluateAutonomousExecutionTrust(config, issue);
+    if (!trustDecision.allowed) {
+      blockedIssues.push({
+        issueNumber: issue.number,
+        title: issue.title,
+        blockedBy: `trust_gate:${trustDecision.readinessToken}`,
+      });
+      continue;
+    }
+
+    const blockingIssue = findBlockingIssue(issue, issues, state);
+    if (blockingIssue) {
+      blockedIssues.push({
+        issueNumber: issue.number,
+        title: issue.title,
+        blockedBy: blockingIssue.reason,
+      });
+      continue;
+    }
+
+    if (
+      !isEligibleForSelection(existing, config) &&
+      !codexConnectorReviewRequestRecoveryIssueNumbers.has(issue.number) &&
+      !codexConnectorValidReviewRepairIssueNumbers.has(issue.number) &&
+      !(isAutonomousExecutionTrustBlockedRecord(existing) && trustDecision.allowed)
+    ) {
+      blockedIssues.push({
+        issueNumber: issue.number,
+        title: issue.title,
+        blockedBy: `local_state:${existing?.state ?? "unknown"}`,
+      });
+      continue;
+    }
+
+    runnableIssues.push({
+      issueNumber: issue.number,
+      title: issue.title,
+      readiness: formatRunnableReadinessReason(issue, issues, state, readiness.isExecutionReady),
+    });
+  }
+
+  const blockedPartialWorkIncident =
+    runnableIssues.length === 0 ? findLatestBlockedPreservedPartialWorkIncident(state) : null;
+  const surfacedBlockedPartialWorkIncident =
+    blockedPartialWorkIncident &&
+      blockedIssues.some(
+        (issue) =>
+          issue.issueNumber === blockedPartialWorkIncident.record.issue_number &&
+          issue.blockedBy === "local_state:blocked",
+      )
+      ? blockedPartialWorkIncident
+      : null;
+  const queueIsIdle =
+    state.activeIssueNumber === null &&
+    runnableIssues.length === 0 &&
+    blockedIssues.length === 0;
+  const latestMergedPrConvergenceLine =
+    queueIsIdle
+      ? formatMergedPrConvergenceOperatorEventLine(findLatestMergedPrConvergenceRecord(state))
+      : null;
+
+  return {
+    runnableIssues,
+    blockedIssues,
+    readinessLines: [
+      ...prefixedReadinessLines,
+      ...(candidateDiscoveryWarningLine === null ? [] : [candidateDiscoveryWarningLine]),
+      `runnable_issues=${runnableIssues.length > 0 ? runnableIssues.map((issue) => `#${issue.issueNumber} ready=${issue.readiness}`).join(",") : "none"}`,
+      `blocked_issues=${blockedIssues.length > 0 ? blockedIssues.map((issue) => `#${issue.issueNumber} blocked_by=${issue.blockedBy}`).join("; ") : "none"}`,
+      ...(latestMergedPrConvergenceLine === null ? [] : [latestMergedPrConvergenceLine]),
+      ...(surfacedBlockedPartialWorkIncident === null
+        ? []
+        : [formatBlockedPreservedPartialWorkLine(surfacedBlockedPartialWorkIncident)]),
+    ],
+  };
+}
+
+export async function buildSelectionWhySummary(
+  github: SelectionWhyGitHub,
+  config: SupervisorConfig,
+  state: SupervisorStateFile,
+): Promise<string[]> {
+  if (state.inventory_refresh_failure) {
+    return [
+      "selected_issue=none",
+      "selection_reason=inventory_refresh_degraded",
+    ];
+  }
+
+  const summary = await buildSelectionSummary(github, config, state);
+  const blockedPartialWorkIncident =
+    summary.selectedIssueNumber === null && summary.selectionReason?.startsWith("blocked_partial_work_manual_review")
+      ? findLatestBlockedPreservedPartialWorkIncident(state)
+      : null;
+  return [
+    summary.selectedIssueNumber === null ? "selected_issue=none" : `selected_issue=#${summary.selectedIssueNumber}`,
+    `selection_reason=${summary.selectionReason ?? "no_runnable_issue"}`,
+    ...(blockedPartialWorkIncident === null ? [] : [formatBlockedPreservedPartialWorkLine(blockedPartialWorkIncident)]),
+  ];
+}
+
+export async function buildSelectionSummary(
+  github: SelectionWhyGitHub,
+  config: SupervisorConfig,
+  state: SupervisorStateFile,
+): Promise<SupervisorSelectionSummaryDto> {
+  if (state.inventory_refresh_failure) {
+    return {
+      selectedIssueNumber: null,
+      selectionReason: "inventory_refresh_degraded",
+    };
+  }
+
+  const candidateIssues = await github.listCandidateIssues();
+  const issues = await github.listAllIssues();
+  const blockedPartialWorkIncident = findLatestBlockedPreservedPartialWorkIncident(state);
+  let blockedPartialWorkBlocked = false;
+
+  for (const issue of candidateIssues) {
+    if (config.skipTitlePrefixes.some((prefix) => issue.title.startsWith(prefix))) {
+      continue;
+    }
+
+    const existing = state.issues[String(issue.number)];
+    if (!hasAvailableIssueLabels(issue)) {
+      continue;
+    }
+
+    const readiness = lintExecutionReadyIssueBody(issue);
+    if (shouldEnforceExecutionReady(existing) && !readiness.isExecutionReady) {
+      continue;
+    }
+
+    if (findHighRiskBlockingAmbiguity(issue)) {
+      continue;
+    }
+
+    const trustDecision = evaluateAutonomousExecutionTrust(config, issue);
+    if (!trustDecision.allowed) {
+      continue;
+    }
+
+    if (findBlockingIssue(issue, issues, state)) {
+      continue;
+    }
+
+    if (
+      !isEligibleForSelection(existing, config) &&
+      !(await shouldSelectCodexConnectorReviewRequestRecovery(github, config, existing)) &&
+      !(await shouldSelectCodexConnectorValidReviewRepair({
+        config,
+        record: existing,
+        getPullRequestIfExists: github.getPullRequestIfExists
+          ? (prNumber, options) => github.getPullRequestIfExists!(prNumber, options)
+          : undefined,
+        getChecks: github.getChecks
+          ? (prNumber) => github.getChecks!(prNumber)
+          : undefined,
+        getUnresolvedReviewThreads: github.getUnresolvedReviewThreads
+          ? (prNumber) => github.getUnresolvedReviewThreads!(prNumber)
+          : undefined,
+      })) &&
+      !(isAutonomousExecutionTrustBlockedRecord(existing) && trustDecision.allowed)
+    ) {
+      if (blockedPartialWorkIncident?.record.issue_number === issue.number) {
+        blockedPartialWorkBlocked = true;
+      }
+      continue;
+    }
+
+    return {
+      selectedIssueNumber: issue.number,
+      selectionReason: formatSelectionReason(issue, issues, state, existing, readiness.isExecutionReady, config),
+    };
+  }
+
+  return {
+    selectedIssueNumber: null,
+    selectionReason:
+      blockedPartialWorkIncident === null || !blockedPartialWorkBlocked
+        ? "no_runnable_issue"
+        : `blocked_partial_work_manual_review issue=#${blockedPartialWorkIncident.record.issue_number}`,
+  };
+}
+
+function formatRunnableReadinessReason(
+  issue: GitHubIssue,
+  issues: GitHubIssue[],
+  state: SupervisorStateFile,
+  isExecutionReady: boolean,
+): string {
+  const metadata = parseIssueMetadata(issue);
+  const reasons = [isExecutionReady ? "execution_ready" : "requirements_skipped"];
+
+  if (metadata.dependsOn.length > 0) {
+    const satisfiedDependencies = metadata.dependsOn.filter(
+      (dependencyNumber) => isRecordDoneForSequencing(state.issues[String(dependencyNumber)]),
+    );
+
+    if (satisfiedDependencies.length > 0) {
+      reasons.push(`depends_on_satisfied:${satisfiedDependencies.join("|")}`);
+    }
+  }
+
+  if (
+    metadata.parentIssueNumber !== null &&
+    metadata.executionOrderIndex !== null &&
+    metadata.executionOrderIndex > 1
+  ) {
+    const clearedPredecessors = issues
+      .filter((candidate) => candidate.number !== issue.number)
+      .map((candidate) => ({
+        issue: candidate,
+        metadata: parseIssueMetadata(candidate),
+      }))
+      .filter(
+        ({ metadata: candidateMetadata }) =>
+          candidateMetadata.parentIssueNumber === metadata.parentIssueNumber &&
+          candidateMetadata.executionOrderIndex !== null &&
+          candidateMetadata.executionOrderIndex < metadata.executionOrderIndex!,
+      )
+      .sort(
+        (left, right) =>
+          (left.metadata.executionOrderIndex ?? Number.MAX_SAFE_INTEGER) -
+          (right.metadata.executionOrderIndex ?? Number.MAX_SAFE_INTEGER),
+      )
+      .map(({ issue: predecessorIssue }) => predecessorIssue.number)
+      .filter((predecessorNumber) => isRecordDoneForSequencing(state.issues[String(predecessorNumber)]));
+
+    if (clearedPredecessors.length > 0) {
+      reasons.push(`execution_order_satisfied:${clearedPredecessors.join("|")}`);
+    }
+  }
+
+  return reasons.join("+");
+}

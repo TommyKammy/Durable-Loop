@@ -1,0 +1,367 @@
+import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { type GitHubIssue, type IssueRunRecord, type SupervisorStateFile } from "./core/types";
+import { reconcileStaleActiveIssueReservationInModule } from "./recovery-active-reconciliation";
+import { reconcileRecoverableBlockedIssueStatesInModule } from "./recovery-blocked-issue-reconciliation";
+import { reconcileStaleDoneIssueStatesInModule } from "./recovery-historical-reconciliation";
+import { reconcileParentEpicClosuresInModule } from "./recovery-parent-epic-reconciliation";
+import { normalizeRecoveryEntrypointResult } from "./recovery-entrypoint-result";
+import { type RecoveryEvent } from "./run-once-cycle-prelude";
+import {
+  createIssue,
+  createConfig,
+  executionReadyBody,
+  createPullRequest,
+  createRecord,
+  createSupervisorState,
+} from "./supervisor/supervisor-test-helpers";
+
+const RECOVERY_AT = "2026-03-13T00:25:00Z";
+
+function buildRecoveryEvent(issueNumber: number, reason: string): RecoveryEvent {
+  return {
+    issueNumber,
+    reason,
+    at: RECOVERY_AT,
+  };
+}
+
+function applyRecoveryEvent(
+  patch: Partial<IssueRunRecord>,
+  recoveryEvent: RecoveryEvent,
+): Partial<IssueRunRecord> {
+  return {
+    ...patch,
+    last_recovery_reason: recoveryEvent.reason,
+    last_recovery_at: recoveryEvent.at,
+  };
+}
+
+function touch(current: IssueRunRecord, patch: Partial<IssueRunRecord>): IssueRunRecord {
+  return {
+    ...current,
+    ...patch,
+    updated_at: RECOVERY_AT,
+  };
+}
+
+test("active recovery boundary clears a stale active reservation without loading aggregate reconciliation", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-active-boundary-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const record = createRecord({
+    issue_number: 366,
+    state: "implementing",
+    workspace: tempDir,
+    codex_session_id: null,
+  });
+  const state = createSupervisorState({
+    activeIssueNumber: 366,
+    issues: [record],
+  });
+  let saveCalls = 0;
+
+  const recoveryEvents = await reconcileStaleActiveIssueReservationInModule({
+    state,
+    stateStore: {
+      touch,
+      async save(): Promise<void> {
+        saveCalls += 1;
+      },
+    },
+    issueLockPath: (issueNumber) => path.join(tempDir, `issue-${issueNumber}.lock`),
+    sessionLockPath: (sessionId) => path.join(tempDir, `${sessionId}.lock`),
+    buildRecoveryEvent,
+    applyRecoveryEvent,
+  });
+
+  assert.equal(saveCalls, 1);
+  assert.equal(state.activeIssueNumber, null);
+  assert.equal(recoveryEvents.length, 1);
+  assert.equal(
+    recoveryEvents[0]?.reason,
+    "stale_state_cleanup: cleared stale active reservation after issue lock was missing",
+  );
+});
+
+test("active stabilizing recovery resolves tracked PRs with action-grade hydration", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-active-pr-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const record = createRecord({
+    issue_number: 367,
+    state: "stabilizing",
+    branch: "codex/issue-367",
+    pr_number: 467,
+    workspace: tempDir,
+    codex_session_id: null,
+  });
+  const state = createSupervisorState({
+    activeIssueNumber: 367,
+    issues: [record],
+  });
+  let saveCalls = 0;
+
+  const recoveryEvents = await reconcileStaleActiveIssueReservationInModule({
+    state,
+    stateStore: {
+      touch,
+      async save(): Promise<void> {
+        saveCalls += 1;
+      },
+    },
+    issueLockPath: (issueNumber) => path.join(tempDir, `issue-${issueNumber}.lock`),
+    sessionLockPath: (sessionId) => path.join(tempDir, `${sessionId}.lock`),
+    resolvePullRequestForBranch: async (branch, trackedPrNumber, options) => {
+      assert.equal(branch, "codex/issue-367");
+      assert.equal(trackedPrNumber, 467);
+      assert.equal(options?.purpose, "action");
+      return createPullRequest({
+        number: 467,
+        headRefName: "codex/issue-367",
+      });
+    },
+    buildRecoveryEvent,
+    applyRecoveryEvent,
+  });
+
+  assert.equal(saveCalls, 1);
+  assert.equal(state.activeIssueNumber, null);
+  assert.equal(state.issues["367"]?.pr_number, 467);
+  assert.equal(recoveryEvents[0]?.reason, "stale_state_cleanup: cleared stale active reservation after issue lock was missing");
+});
+
+test("blocked recovery boundary requeues requirements blockers without aggregate reconciliation", async () => {
+  const record = createRecord({
+    issue_number: 366,
+    state: "blocked",
+    blocked_reason: "requirements",
+    last_error: "Issue #366 is missing execution-ready metadata.",
+    last_failure_signature: "requirements:metadata",
+    repeated_failure_signature_count: 2,
+  });
+  const state = createSupervisorState({
+    issues: [record],
+  });
+  const issues: GitHubIssue[] = [
+    createIssue({
+      number: 366,
+      body: executionReadyBody("Add focused regression coverage."),
+      state: "OPEN",
+    }),
+  ];
+  let saveCalls = 0;
+
+  const recoveryEvents = await reconcileRecoverableBlockedIssueStatesInModule(
+    {
+      getPullRequestIfExists: async () => {
+        throw new Error("unexpected getPullRequestIfExists call");
+      },
+      getIssue: async () => {
+        throw new Error("unexpected getIssue call");
+      },
+      getChecks: async () => {
+        throw new Error("unexpected getChecks call");
+      },
+      getUnresolvedReviewThreads: async () => {
+        throw new Error("unexpected getUnresolvedReviewThreads call");
+      },
+    },
+    {
+      touch,
+      async save(): Promise<void> {
+        saveCalls += 1;
+      },
+    },
+    state,
+    createConfig(),
+    issues,
+    {
+      shouldAutoRetryHandoffMissing: () => false,
+    },
+  );
+
+  assert.equal(saveCalls, 1);
+  assert.equal(state.issues["366"]?.state, "queued");
+  assert.equal(state.issues["366"]?.blocked_reason, null);
+  assert.equal(state.issues["366"]?.last_failure_signature, null);
+  assert.equal(state.issues["366"]?.repeated_failure_signature_count, 0);
+  assert.deepEqual(recoveryEvents.map((event) => event.reason), [
+    "requirements_recovered: requeued issue #366 after execution-ready metadata was added",
+  ]);
+});
+
+test("historical recovery boundary downgrades stale no-PR done records", async () => {
+  const record = createRecord({
+    issue_number: 240,
+    state: "done",
+    pr_number: null,
+  });
+  const state = createSupervisorState({
+    issues: [record],
+  });
+  let saveCalls = 0;
+
+  const recoveryEvents = await reconcileStaleDoneIssueStatesInModule(
+    {
+      getIssue: async () => {
+        throw new Error("unexpected getIssue call");
+      },
+    },
+    {
+      touch,
+      async save(): Promise<void> {
+        saveCalls += 1;
+      },
+    },
+    state,
+    [
+      createIssue({
+        number: 240,
+        state: "OPEN",
+      }),
+    ],
+    {
+      buildRecoveryEvent,
+      applyRecoveryEvent,
+    },
+  );
+
+  assert.equal(saveCalls, 1);
+  assert.equal(state.issues["240"]?.state, "blocked");
+  assert.equal(state.issues["240"]?.blocked_reason, "manual_review");
+  assert.equal(recoveryEvents[0]?.reason, "stale_done_manual_review: blocked issue #240 after reconsidering an open no-PR done record with no authoritative completion signal");
+});
+
+test("parent epic recovery boundary closes ready parents without aggregate reconciliation", async () => {
+  const state: SupervisorStateFile = {
+    activeIssueNumber: null,
+    issues: {},
+  };
+  let closeIssueCalls = 0;
+  let saveCalls = 0;
+
+  const recoveryEvents = await reconcileParentEpicClosuresInModule(
+    {
+      closeIssue: async () => {
+        closeIssueCalls += 1;
+      },
+    },
+    {
+      touch,
+      async save(): Promise<void> {
+        saveCalls += 1;
+      },
+    },
+    state,
+    [
+      createIssue({
+        number: 123,
+        title: "Parent issue",
+        state: "OPEN",
+      }),
+      createIssue({
+        number: 201,
+        title: "Child one",
+        body: "Part of #123",
+        state: "CLOSED",
+      }),
+      createIssue({
+        number: 202,
+        title: "Child two",
+        body: "- Part of: #123",
+        state: "CLOSED",
+      }),
+    ],
+    {
+      buildRecoveryEvent,
+      applyRecoveryEvent,
+      createRecoveredDoneRecord: (issueNumber) => createRecord({
+        issue_number: issueNumber,
+        state: "done",
+        pr_number: null,
+      }),
+      needsRecordUpdate: (record, patch) =>
+        Object.entries(patch).some(([key, value]) =>
+          JSON.stringify(record[key as keyof IssueRunRecord]) !== JSON.stringify(value)),
+    },
+  );
+
+  assert.equal(closeIssueCalls, 1);
+  assert.equal(saveCalls, 1);
+  assert.equal(state.issues["123"]?.state, "done");
+  assert.equal(recoveryEvents[0]?.reason, "parent_epic_auto_closed: auto-closed parent epic #123 because child issues #201, #202 are closed");
+});
+
+test("recovery entrypoint results normalize event arrays into a shared operator-facing contract", () => {
+  const event = buildRecoveryEvent(
+    451,
+    "tracked_pr_lifecycle_recovered: resumed issue #451 from failed to pr_open using fresh tracked PR #951 facts at head head-951",
+  );
+
+  assert.deepEqual(
+    normalizeRecoveryEntrypointResult([event], {
+      prNumber: 951,
+      operatorMessage: "tracked PR recovery resumed issue #451",
+    }),
+    {
+      outcome: "recovered",
+      reason: event.reason,
+      issueNumber: 451,
+      prNumber: 951,
+      operatorMessage: "tracked PR recovery resumed issue #451",
+      events: [event],
+    },
+  );
+
+  assert.deepEqual(normalizeRecoveryEntrypointResult([]), {
+    outcome: "unchanged",
+    reason: null,
+    issueNumber: null,
+    prNumber: null,
+    operatorMessage: null,
+    events: [],
+  });
+});
+
+test("recovery entrypoint results avoid summarizing mixed event reasons without an explicit batch reason", () => {
+  const noPrEvent = buildRecoveryEvent(
+    451,
+    "failed_no_pr_recovered: requeued issue #451 after branch recovered",
+  );
+  const trackedPrEvent = buildRecoveryEvent(
+    452,
+    "tracked_pr_lifecycle_recovered: resumed issue #452 using fresh tracked PR #952 facts",
+  );
+
+  assert.deepEqual(normalizeRecoveryEntrypointResult([noPrEvent, trackedPrEvent]), {
+    outcome: "recovered",
+    reason: null,
+    issueNumber: null,
+    prNumber: null,
+    operatorMessage: null,
+    events: [noPrEvent, trackedPrEvent],
+  });
+
+  assert.deepEqual(
+    normalizeRecoveryEntrypointResult([noPrEvent, trackedPrEvent], {
+      reason: "stale failed recovery batch",
+      operatorMessage: "stale failed recovery batch completed",
+    }),
+    {
+      outcome: "recovered",
+      reason: "stale failed recovery batch",
+      issueNumber: null,
+      prNumber: null,
+      operatorMessage: "stale failed recovery batch completed",
+      events: [noPrEvent, trackedPrEvent],
+    },
+  );
+});

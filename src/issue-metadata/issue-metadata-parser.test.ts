@@ -1,0 +1,85 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { parseIssueMetadata } from "./issue-metadata-parser";
+import { GitHubIssue } from "../core/types";
+import {
+  countExecutionOrderDeclarations,
+  countMetadataLineDeclarations,
+  getSingleMetadataLineValue,
+  ISSUE_METADATA_FIELDS,
+} from "./issue-metadata-contract";
+
+function createIssue(overrides: Partial<GitHubIssue> = {}): GitHubIssue {
+  return {
+    number: 1,
+    title: "Issue",
+    body: "",
+    createdAt: "2026-03-13T00:00:00Z",
+    updatedAt: "2026-03-13T00:00:00Z",
+    url: "https://example.com/issues/1",
+    state: "OPEN",
+    ...overrides,
+  };
+}
+
+test("parseIssueMetadata preserves dependency and normalization behavior", () => {
+  const issue = createIssue({
+    body: `Part of: #123
+Depends on: #45, #67, #45, ignored, #0
+Parallel group: parser-refactor
+Touches: src/issue-metadata/issue-metadata.ts, src/supervisor.ts
+
+## Execution order
+2 of 3`,
+  });
+
+  assert.deepEqual(parseIssueMetadata(issue), {
+    parentIssueNumber: 123,
+    executionOrderIndex: 2,
+    executionOrderTotal: 3,
+    dependsOn: [45, 67],
+    parallelGroup: "parser-refactor",
+    touches: ["src/issue-metadata/issue-metadata.ts", "src/supervisor.ts"],
+  });
+});
+
+test("parseIssueMetadata accepts bullet-prefixed part-of metadata", () => {
+  const issue = createIssue({
+    body: `- Part of: #123
+Depends on: none`,
+  });
+
+  assert.equal(parseIssueMetadata(issue).parentIssueNumber, 123);
+});
+
+test("parseIssueMetadata fails closed on duplicate scheduling declarations", () => {
+  const issue = createIssue({
+    body: `Part of: #123
+Depends on: none
+Depends on: #45
+Execution order: 1 of 2
+Execution order: 2 of 2
+Parallel group: parser-refactor`,
+  });
+
+  assert.deepEqual(parseIssueMetadata(issue), {
+    parentIssueNumber: 123,
+    executionOrderIndex: null,
+    executionOrderTotal: null,
+    dependsOn: [],
+    parallelGroup: "parser-refactor",
+    touches: [],
+  });
+});
+
+test("issue metadata contract helpers define shared scheduling line parsing", () => {
+  const body = `Depends on: none
+Parallelizable: No
+
+## Execution order
+1 of 1`;
+
+  assert.equal(countMetadataLineDeclarations(body, ISSUE_METADATA_FIELDS.dependsOn), 1);
+  assert.equal(getSingleMetadataLineValue(body, ISSUE_METADATA_FIELDS.parallelizable), "No");
+  assert.equal(countExecutionOrderDeclarations(body), 1);
+});

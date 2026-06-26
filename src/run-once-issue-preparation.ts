@@ -1,0 +1,594 @@
+import { GitHubClient } from "./github";
+import { issueJournalPath, syncIssueJournal as syncIssueJournalImpl } from "./core/journal";
+import { syncMemoryArtifacts as syncMemoryArtifactsImpl } from "./core/memory";
+import { RecoveryEvent } from "./run-once-cycle-prelude";
+import {
+  applyFailureSignature,
+  buildCodexFailureContext,
+} from "./supervisor/supervisor-failure-helpers";
+import { StateStore } from "./core/state-store";
+import {
+  CliOptions,
+  EnsuredWorkspace,
+  GitHubIssue,
+  GitHubPullRequest,
+  IssueRunRecord,
+  PullRequestCheck,
+  ReviewThread,
+  SupervisorConfig,
+  SupervisorStateFile,
+  WorkspaceStatus,
+} from "./core/types";
+import { nowIso } from "./core/utils";
+import {
+  ensureWorkspace as ensureWorkspaceImpl,
+  getWorkspaceStatus as getWorkspaceStatusImpl,
+  pushBranch as pushBranchImpl,
+} from "./core/workspace";
+import { shouldPreserveNoPrFailureTracking } from "./no-pull-request-state";
+import { runLocalCiGate, type LocalCiCommandRunner } from "./local-ci";
+import {
+  runWorkstationLocalPathGate,
+  type WorkstationLocalPathGateResult,
+} from "./workstation-local-path-gate";
+import { writeSupervisorCycleDecisionSnapshot as writeSupervisorCycleDecisionSnapshotImpl } from "./supervisor/supervisor-cycle-snapshot";
+import { writePreMergeAssessmentSnapshot as writePreMergeAssessmentSnapshotImpl } from "./supervisor/pre-merge-assessment-snapshot";
+import {
+  executionMetricsRetentionRootPath,
+  syncExecutionMetricsRunSummarySafely,
+} from "./supervisor/execution-metrics-run-summary";
+import { syncPostMergeAuditArtifactSafely } from "./supervisor/post-merge-audit-artifact";
+
+export type IssueJournalSync = (record: IssueRunRecord) => Promise<void>;
+export type MemoryArtifacts = Awaited<ReturnType<typeof syncMemoryArtifactsImpl>>;
+
+export interface PreparedWorkspaceContext {
+  record: IssueRunRecord;
+  issue: GitHubIssue;
+  previousCodexSummary: string | null;
+  previousError: string | null;
+  workspacePath: string;
+  journalPath: string;
+  syncJournal: IssueJournalSync;
+  memoryArtifacts: MemoryArtifacts;
+  workspaceStatus: WorkspaceStatus;
+}
+
+export interface HydratedPullRequestContext {
+  record: IssueRunRecord;
+  pr: GitHubPullRequest | null;
+  checks: PullRequestCheck[];
+  reviewThreads: ReviewThread[];
+  workspaceStatus: WorkspaceStatus;
+}
+
+export interface PreparedIssueExecutionContext extends PreparedWorkspaceContext, HydratedPullRequestContext {}
+
+export interface RestartRunOnce {
+  kind: "restart";
+  recoveryEvents?: RecoveryEvent[];
+}
+
+type PreparationGitHub = Pick<
+  GitHubClient,
+  "resolvePullRequestForBranch" | "getChecks" | "getUnresolvedReviewThreads" | "createPullRequest"
+>;
+type PreparationStateStore = Pick<StateStore, "save" | "touch">;
+
+interface SyncIssueJournalArgs {
+  issue: GitHubIssue;
+  record: IssueRunRecord;
+  journalPath: string;
+  maxChars: number;
+}
+
+interface SyncMemoryArtifactsArgs {
+  config: SupervisorConfig;
+  issueNumber: number;
+  workspacePath: string;
+  journalPath: string;
+}
+
+interface PrepareIssueExecutionContextArgs {
+  github: PreparationGitHub;
+  config: SupervisorConfig;
+  stateStore: PreparationStateStore;
+  state: SupervisorStateFile;
+  record: IssueRunRecord;
+  issue: GitHubIssue;
+  options: Pick<CliOptions, "dryRun">;
+  ensureWorkspace?: (
+    config: SupervisorConfig,
+    issueNumber: number,
+    branch: string,
+  ) => Promise<string | EnsuredWorkspace>;
+  syncIssueJournal?: (args: SyncIssueJournalArgs) => Promise<void>;
+  syncMemoryArtifacts?: (args: SyncMemoryArtifactsArgs) => Promise<MemoryArtifacts>;
+  getWorkspaceStatus?: (workspacePath: string, branch: string, defaultBranch: string) => Promise<WorkspaceStatus>;
+  pushBranch?: (workspacePath: string, branch: string, remoteBranchExists: boolean) => Promise<void>;
+  writeSupervisorCycleDecisionSnapshot?: (args: {
+    config: SupervisorConfig;
+    capturedAt: string;
+    issue: GitHubIssue;
+    record: IssueRunRecord;
+    workspacePath: string;
+    workspaceStatus: WorkspaceStatus;
+    pr: GitHubPullRequest | null;
+    checks: PullRequestCheck[];
+    reviewThreads: ReviewThread[];
+  }) => Promise<string>;
+  writePreMergeAssessmentSnapshot?: (args: {
+    config: SupervisorConfig;
+    capturedAt: string;
+    issue: GitHubIssue;
+    record: IssueRunRecord;
+    workspacePath: string;
+    pr: GitHubPullRequest | null;
+    checks: PullRequestCheck[];
+    reviewThreads: ReviewThread[];
+  }) => Promise<string>;
+  now?: () => string;
+  runLocalCiCommand?: LocalCiCommandRunner;
+  runWorkstationLocalPathGate?: (args: {
+    workspacePath: string;
+    gateLabel: string;
+    publishablePathAllowlistMarkers?: readonly string[];
+  }) => Promise<WorkstationLocalPathGateResult>;
+}
+
+export function isRestartRunOnce(
+  result: unknown,
+): result is RestartRunOnce {
+  return (
+    typeof result === "object" &&
+    result !== null &&
+    "kind" in result &&
+    (result as { kind?: string }).kind === "restart"
+  );
+}
+
+function isOpenPullRequest(pr: GitHubPullRequest | null): pr is GitHubPullRequest {
+  return pr !== null && pr.state === "OPEN" && !pr.mergedAt;
+}
+
+function buildRecoveryEvent(issueNumber: number, reason: string, now: () => string): RecoveryEvent {
+  return {
+    issueNumber,
+    reason,
+    at: now(),
+  };
+}
+
+function applyRecoveryEvent(
+  patch: Partial<IssueRunRecord>,
+  recoveryEvent: RecoveryEvent,
+): Partial<IssueRunRecord> {
+  return {
+    ...patch,
+    last_recovery_reason: recoveryEvent.reason,
+    last_recovery_at: recoveryEvent.at,
+  };
+}
+
+function normalizeEnsuredWorkspace(
+  ensuredWorkspace: string | EnsuredWorkspace,
+  branch: string,
+): EnsuredWorkspace {
+  if (typeof ensuredWorkspace === "string") {
+    return {
+      workspacePath: ensuredWorkspace,
+      restore: {
+        source: "existing_workspace",
+        ref: branch,
+      },
+    };
+  }
+
+  return ensuredWorkspace;
+}
+
+function withWorkspaceRestoreMetadata(
+  workspaceStatus: WorkspaceStatus,
+  restore: Pick<WorkspaceStatus, "restoreSource" | "restoreRef">,
+): WorkspaceStatus {
+  return {
+    ...workspaceStatus,
+    restoreSource: restore.restoreSource,
+    restoreRef: restore.restoreRef,
+  };
+}
+
+async function prepareWorkspaceContext(
+  args: PrepareIssueExecutionContextArgs,
+): Promise<PreparedWorkspaceContext> {
+  const ensureWorkspace = args.ensureWorkspace ?? ensureWorkspaceImpl;
+  const syncIssueJournal = args.syncIssueJournal ?? syncIssueJournalImpl;
+  const syncMemoryArtifacts = args.syncMemoryArtifacts ?? syncMemoryArtifactsImpl;
+  const getWorkspaceStatus = args.getWorkspaceStatus ?? getWorkspaceStatusImpl;
+
+  const previousCodexSummary = args.record.last_codex_summary;
+  const previousError = args.record.last_error;
+  const ensuredWorkspace = normalizeEnsuredWorkspace(
+    await ensureWorkspace(args.config, args.record.issue_number, args.record.branch),
+    args.record.branch,
+  );
+  const workspacePath = ensuredWorkspace.workspacePath;
+  const journalPath = issueJournalPath(workspacePath, args.config.issueJournalRelativePath, args.record.issue_number);
+  const syncJournal: IssueJournalSync = async (currentRecord: IssueRunRecord): Promise<void> => {
+    await syncIssueJournal({
+      issue: args.issue,
+      record: currentRecord,
+      journalPath,
+      maxChars: args.config.issueJournalMaxChars,
+    });
+  };
+
+  const preparedRecord = args.stateStore.touch(args.record, {
+    workspace: workspacePath,
+    journal_path: journalPath,
+    state: args.record.implementation_attempt_count === 0 ? "planning" : args.record.state,
+    workspace_restore_source: ensuredWorkspace.restore.source,
+    workspace_restore_ref: ensuredWorkspace.restore.ref,
+    last_error: shouldPreserveNoPrFailureTracking(args.record) ? args.record.last_error : null,
+    last_failure_kind: null,
+    blocked_reason: null,
+  });
+  args.state.issues[String(preparedRecord.issue_number)] = preparedRecord;
+  await args.stateStore.save(args.state);
+  await syncJournal(preparedRecord);
+
+  const memoryArtifacts = await syncMemoryArtifacts({
+    config: args.config,
+    issueNumber: preparedRecord.issue_number,
+    workspacePath,
+    journalPath,
+  });
+
+  const workspaceStatus = withWorkspaceRestoreMetadata(
+    await getWorkspaceStatus(workspacePath, preparedRecord.branch, args.config.defaultBranch),
+    {
+      restoreSource: ensuredWorkspace.restore.source,
+      restoreRef: ensuredWorkspace.restore.ref,
+    },
+  );
+  const hydratedRecord = args.stateStore.touch(preparedRecord, { last_head_sha: workspaceStatus.headSha });
+  args.state.issues[String(hydratedRecord.issue_number)] = hydratedRecord;
+  await args.stateStore.save(args.state);
+
+  return {
+    record: hydratedRecord,
+    issue: args.issue,
+    previousCodexSummary,
+    previousError,
+    workspacePath,
+    journalPath,
+    syncJournal,
+    memoryArtifacts,
+    workspaceStatus,
+  };
+}
+
+async function hydratePullRequestContext(
+  args: PrepareIssueExecutionContextArgs & {
+    record: IssueRunRecord;
+    workspacePath: string;
+    workspaceStatus: WorkspaceStatus;
+    syncJournal: IssueJournalSync;
+  },
+): Promise<HydratedPullRequestContext | RestartRunOnce | string> {
+  const pushBranch = args.pushBranch ?? pushBranchImpl;
+  const getWorkspaceStatus = args.getWorkspaceStatus ?? getWorkspaceStatusImpl;
+  const writeSupervisorCycleDecisionSnapshot =
+    args.writeSupervisorCycleDecisionSnapshot ?? writeSupervisorCycleDecisionSnapshotImpl;
+  const writePreMergeAssessmentSnapshot =
+    args.writePreMergeAssessmentSnapshot ?? writePreMergeAssessmentSnapshotImpl;
+  const runWorkstationLocalPathGateImpl = args.runWorkstationLocalPathGate ?? runWorkstationLocalPathGate;
+  const now = args.now ?? nowIso;
+  let record = args.record;
+
+  const blockPublicationForPathHygieneFailure = async (): Promise<string | null> => {
+    const pathHygieneGate = await runWorkstationLocalPathGateImpl({
+      workspacePath: args.workspacePath,
+      gateLabel: "before publication",
+      publishablePathAllowlistMarkers: args.config.publishablePathAllowlistMarkers,
+    });
+    if (pathHygieneGate.ok) {
+      return null;
+    }
+
+    const failureContext = pathHygieneGate.failureContext;
+    const previousRecord = record;
+    const blockedRecord = args.stateStore.touch(record, {
+      state: "blocked",
+      last_error:
+        failureContext?.summary ??
+        "Tracked durable artifacts failed workstation-local path hygiene before publication.",
+      last_failure_kind: null,
+      last_failure_context: failureContext,
+      ...applyFailureSignature(record, failureContext),
+      blocked_reason: "verification",
+    });
+    record = blockedRecord;
+    args.state.issues[String(blockedRecord.issue_number)] = blockedRecord;
+    await args.stateStore.save(args.state);
+    await syncExecutionMetricsRunSummarySafely({
+      previousRecord,
+      nextRecord: blockedRecord,
+      issue: args.issue,
+      retentionRootPath: executionMetricsRetentionRootPath(args.config.stateFile),
+      warningContext: "persisting",
+    });
+    await args.syncJournal(blockedRecord);
+    return `Issue #${blockedRecord.issue_number} blocked: tracked durable artifacts failed workstation-local path hygiene before publication.`;
+  };
+
+  let nextWorkspaceStatus = args.workspaceStatus;
+  if (nextWorkspaceStatus.remoteBranchExists && nextWorkspaceStatus.remoteAhead > 0) {
+    const pathHygieneBlocked = await blockPublicationForPathHygieneFailure();
+    if (pathHygieneBlocked) {
+      return pathHygieneBlocked;
+    }
+    await pushBranch(args.workspacePath, args.record.branch, true);
+    nextWorkspaceStatus = withWorkspaceRestoreMetadata(
+      await getWorkspaceStatus(args.workspacePath, args.record.branch, args.config.defaultBranch),
+      nextWorkspaceStatus,
+    );
+  }
+
+  const resolvedPr = await args.github.resolvePullRequestForBranch(
+    args.record.branch,
+    args.record.pr_number,
+    { purpose: "action" },
+  );
+  let pr = isOpenPullRequest(resolvedPr) ? resolvedPr : null;
+  let checks = pr ? await args.github.getChecks(pr.number) : [];
+  let reviewThreads = pr ? await args.github.getUnresolvedReviewThreads(pr.number) : [];
+
+  if (!resolvedPr && record.pr_number !== null) {
+    record = args.stateStore.touch(record, {
+      pr_number: null,
+    });
+    args.state.issues[String(record.issue_number)] = record;
+    await args.stateStore.save(args.state);
+  }
+
+  if (!pr) {
+    if (!resolvedPr) {
+      // No current or historical PR for this branch; continue with normal branch/PR flow.
+    } else if (resolvedPr.mergedAt || resolvedPr.state === "MERGED") {
+      const capturedAt = now();
+      await writeSupervisorCycleDecisionSnapshot({
+        config: args.config,
+        capturedAt,
+        issue: args.issue,
+        record,
+        workspacePath: args.workspacePath,
+        workspaceStatus: nextWorkspaceStatus,
+        pr: resolvedPr,
+        checks: [],
+        reviewThreads: [],
+      });
+      await writePreMergeAssessmentSnapshot({
+        config: args.config,
+        capturedAt,
+        issue: args.issue,
+        record,
+        workspacePath: args.workspacePath,
+        pr: resolvedPr,
+        checks: [],
+        reviewThreads: [],
+      });
+      const recoveryEvent = buildRecoveryEvent(
+        record.issue_number,
+        `merged_pr_convergence: tracked PR #${resolvedPr.number} merged; marked issue #${record.issue_number} done`,
+        now,
+      );
+      const doneRecord = args.stateStore.touch(record, {
+        pr_number: resolvedPr.number,
+        state: "done",
+        last_head_sha: resolvedPr.headRefOid,
+        ...applyRecoveryEvent({}, recoveryEvent),
+      });
+      args.state.issues[String(doneRecord.issue_number)] = doneRecord;
+      args.state.activeIssueNumber = null;
+      await args.stateStore.save(args.state);
+      await syncExecutionMetricsRunSummarySafely({
+        previousRecord: record,
+        nextRecord: doneRecord,
+        issue: args.issue,
+        pullRequest: resolvedPr,
+        recoveryEvents: [recoveryEvent],
+        retentionRootPath: executionMetricsRetentionRootPath(args.config.stateFile),
+        warningContext: "persisting",
+      });
+      await syncPostMergeAuditArtifactSafely({
+        config: args.config,
+        previousRecord: record,
+        nextRecord: doneRecord,
+        issue: args.issue,
+        pullRequest: resolvedPr,
+        warningContext: "persisting",
+      });
+      return { kind: "restart", recoveryEvents: [recoveryEvent] };
+    } else if (resolvedPr.state === "CLOSED") {
+      const capturedAt = now();
+      await writeSupervisorCycleDecisionSnapshot({
+        config: args.config,
+        capturedAt,
+        issue: args.issue,
+        record,
+        workspacePath: args.workspacePath,
+        workspaceStatus: nextWorkspaceStatus,
+        pr: resolvedPr,
+        checks: [],
+        reviewThreads: [],
+      });
+      await writePreMergeAssessmentSnapshot({
+        config: args.config,
+        capturedAt,
+        issue: args.issue,
+        record,
+        workspacePath: args.workspacePath,
+        pr: resolvedPr,
+        checks: [],
+        reviewThreads: [],
+      });
+      const failureContext = buildCodexFailureContext(
+        "manual",
+        `PR #${resolvedPr.number} was closed without merge.`,
+        ["Manual intervention is required before the supervisor can continue this issue."],
+      );
+      const blockedRecord = args.stateStore.touch(record, {
+        pr_number: resolvedPr.number,
+        state: "blocked",
+        last_error:
+          `PR #${resolvedPr.number} was closed without merge. ` +
+          `Manual intervention is required before issue #${record.issue_number} can continue.`,
+        last_failure_kind: null,
+        last_failure_context: failureContext,
+        ...applyFailureSignature(record, failureContext),
+        blocked_reason: "manual_pr_closed",
+      });
+      args.state.issues[String(blockedRecord.issue_number)] = blockedRecord;
+      args.state.activeIssueNumber = null;
+      await args.stateStore.save(args.state);
+      await syncExecutionMetricsRunSummarySafely({
+        previousRecord: record,
+        nextRecord: blockedRecord,
+        issue: args.issue,
+        pullRequest: resolvedPr,
+        retentionRootPath: executionMetricsRetentionRootPath(args.config.stateFile),
+        warningContext: "persisting",
+      });
+      await args.syncJournal(blockedRecord);
+      return `Issue #${blockedRecord.issue_number} blocked because PR #${resolvedPr.number} was closed without merge.`;
+    }
+  }
+
+  if (
+    !pr &&
+    nextWorkspaceStatus.baseAhead > 0 &&
+    !nextWorkspaceStatus.hasUncommittedChanges &&
+    args.record.implementation_attempt_count >= args.config.draftPrAfterAttempt
+  ) {
+    if (args.options.dryRun) {
+      return {
+        record,
+        pr: null,
+        checks: [],
+        reviewThreads: [],
+        workspaceStatus: nextWorkspaceStatus,
+      };
+    }
+
+    const pathHygieneBlocked = await blockPublicationForPathHygieneFailure();
+    if (pathHygieneBlocked) {
+      return pathHygieneBlocked;
+    }
+
+    const localCiGate = await runLocalCiGate({
+      config: args.config,
+      workspacePath: args.workspacePath,
+      gateLabel: "before opening a pull request",
+      runLocalCiCommand: args.runLocalCiCommand,
+    });
+    if (!localCiGate.ok) {
+      const failureContext = localCiGate.failureContext;
+      const blockedRecord = args.stateStore.touch(record, {
+        state: "blocked",
+        latest_local_ci_result: localCiGate.latestResult
+          ? {
+              ...localCiGate.latestResult,
+              head_sha: nextWorkspaceStatus.headSha,
+            }
+          : null,
+        last_error: failureContext?.summary ?? "Configured local CI command failed before opening a pull request.",
+        last_failure_kind: null,
+        last_failure_context: failureContext,
+        ...applyFailureSignature(record, failureContext),
+        blocked_reason: "verification",
+      });
+      args.state.issues[String(blockedRecord.issue_number)] = blockedRecord;
+      await args.stateStore.save(args.state);
+      await syncExecutionMetricsRunSummarySafely({
+        previousRecord: record,
+        nextRecord: blockedRecord,
+        issue: args.issue,
+        retentionRootPath: executionMetricsRetentionRootPath(args.config.stateFile),
+        warningContext: "persisting",
+      });
+      await args.syncJournal(blockedRecord);
+      return `Issue #${blockedRecord.issue_number} blocked: ${blockedRecord.last_error}`;
+    }
+    record = args.stateStore.touch(record, {
+      latest_local_ci_result: localCiGate.latestResult
+        ? {
+            ...localCiGate.latestResult,
+            head_sha: nextWorkspaceStatus.headSha,
+          }
+        : null,
+    });
+    args.state.issues[String(record.issue_number)] = record;
+    await args.stateStore.save(args.state);
+    await args.syncJournal(record);
+    await pushBranch(args.workspacePath, args.record.branch, nextWorkspaceStatus.remoteBranchExists);
+    pr = await args.github.createPullRequest(args.issue, record, { draft: true });
+    checks = await args.github.getChecks(pr.number);
+    reviewThreads = await args.github.getUnresolvedReviewThreads(pr.number);
+  }
+
+  const capturedAt = now();
+  await writeSupervisorCycleDecisionSnapshot({
+    config: args.config,
+    capturedAt,
+    issue: args.issue,
+    record,
+    workspacePath: args.workspacePath,
+    workspaceStatus: nextWorkspaceStatus,
+    pr,
+    checks,
+    reviewThreads,
+  });
+  await writePreMergeAssessmentSnapshot({
+    config: args.config,
+    capturedAt,
+    issue: args.issue,
+    record,
+    workspacePath: args.workspacePath,
+    pr,
+    checks,
+    reviewThreads,
+  });
+
+  return {
+    record,
+    pr,
+    checks,
+    reviewThreads,
+    workspaceStatus: nextWorkspaceStatus,
+  };
+}
+
+export async function prepareIssueExecutionContext(
+  args: PrepareIssueExecutionContextArgs,
+): Promise<PreparedIssueExecutionContext | RestartRunOnce | string> {
+  const preparedWorkspace = await prepareWorkspaceContext(args);
+  const hydratedPullRequest = await hydratePullRequestContext({
+    ...args,
+    record: preparedWorkspace.record,
+    workspacePath: preparedWorkspace.workspacePath,
+    workspaceStatus: preparedWorkspace.workspaceStatus,
+    syncJournal: preparedWorkspace.syncJournal,
+  });
+  if (typeof hydratedPullRequest === "string") {
+    return hydratedPullRequest;
+  }
+  if (isRestartRunOnce(hydratedPullRequest)) {
+    return hydratedPullRequest;
+  }
+
+  return {
+    ...preparedWorkspace,
+    ...hydratedPullRequest,
+  };
+}

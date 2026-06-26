@@ -1,0 +1,870 @@
+import { WEBUI_MUTATION_AUTH_HEADER, WEBUI_MUTATION_AUTH_STORAGE_KEY } from "./webui-mutation-auth";
+import {
+  buildBrowserLocalCiChecklistEntries,
+  buildMutationHeaders,
+  canAdoptBrowserLocalCiRecommendedCommand,
+  canDismissBrowserLocalCiRecommendedCommand,
+  formatBrowserToken,
+  normalizeBrowserLocalCiContract,
+  postMutationJsonWithAuth,
+  promptForMutationAuthToken,
+  readMutationResponsePayload,
+  readStoredMutationAuthToken,
+  writeStoredMutationAuthToken,
+} from "./webui-browser-script-helpers";
+
+export function renderSetupBrowserScript(): string {
+  return `
+      ${[
+        formatBrowserToken,
+        normalizeBrowserLocalCiContract,
+        buildBrowserLocalCiChecklistEntries,
+        canAdoptBrowserLocalCiRecommendedCommand,
+        canDismissBrowserLocalCiRecommendedCommand,
+        readStoredMutationAuthToken,
+        writeStoredMutationAuthToken,
+        promptForMutationAuthToken,
+        buildMutationHeaders,
+        readMutationResponsePayload,
+        postMutationJsonWithAuth,
+      ]
+        .map((helper) => helper.toString().replace(/__name\([^;]+;\s*/gu, ""))
+        .join("\n\n")}
+
+      const elements = {
+        form: document.getElementById("setup-form"),
+        formSummary: document.getElementById("setup-form-summary"),
+        editors: document.getElementById("setup-editors"),
+        saveButton: document.getElementById("setup-save-button"),
+        saveStatus: document.getElementById("setup-save-status"),
+        restartStatus: document.getElementById("setup-restart-status"),
+        restartDetails: document.getElementById("setup-restart-details"),
+        restartButton: document.getElementById("setup-restart-button"),
+        restartGuidance: document.getElementById("setup-restart-guidance"),
+        overallStatus: document.getElementById("setup-overall-status"),
+        overallCaption: document.getElementById("setup-overall-caption"),
+        summary: document.getElementById("setup-summary"),
+        blockerSummary: document.getElementById("setup-blocker-summary"),
+        blockers: document.getElementById("setup-blockers"),
+        nextActions: document.getElementById("setup-next-actions"),
+        fieldSummary: document.getElementById("setup-field-summary"),
+        fields: document.getElementById("setup-fields"),
+        hostSummary: document.getElementById("setup-host-summary"),
+        hostChecks: document.getElementById("setup-host-checks"),
+        providerPosture: document.getElementById("setup-provider-posture"),
+        providerDetails: document.getElementById("setup-provider-details"),
+        modelRoutingSummary: document.getElementById("setup-model-routing-summary"),
+        modelRoutingDetails: document.getElementById("setup-model-routing-details"),
+        trustPosture: document.getElementById("setup-trust-posture"),
+        trustDetails: document.getElementById("setup-trust-details"),
+        localCiSummary: document.getElementById("setup-local-ci-summary"),
+        localCiActions: document.getElementById("setup-local-ci-actions"),
+        localCiDetails: document.getElementById("setup-local-ci-details"),
+        localCiAdoptRecommended: document.getElementById("setup-local-ci-adopt-recommended"),
+        localCiDismissRecommended: document.getElementById("setup-local-ci-dismiss-recommended"),
+      };
+      const editableFieldOrder = [
+        "repoPath",
+        "repoSlug",
+        "defaultBranch",
+        "workspaceRoot",
+        "stateFile",
+        "codexBinary",
+        "branchPrefix",
+        "localCiCommand",
+        "trustMode",
+        "executionSafetyMode",
+        "reviewProvider",
+      ];
+      const reviewProviderOptions = [
+        { value: "none", label: "No provider selected yet" },
+        { value: "copilot", label: "GitHub Copilot" },
+        { value: "codex", label: "Codex Connector" },
+        { value: "coderabbit", label: "CodeRabbit" },
+      ];
+      const trustModeOptions = [
+        { value: "untrusted_or_mixed", label: "Untrusted or mixed authors" },
+        { value: "trusted_repo_and_authors", label: "Trusted repo and authors" },
+      ];
+      const executionSafetyModeOptions = [
+        { value: "operator_gated", label: "Operator gated" },
+        { value: "unsandboxed_autonomous", label: "Unsandboxed autonomous" },
+      ];
+      let currentReport = null;
+      let latestSaveResult = null;
+      let saveInFlight = false;
+      let restartInFlight = false;
+      let restartRequested = false;
+      let reconnectPollToken = 0;
+      const reconnectPollInitialIntervalMs = 50;
+      const reconnectPollMaxIntervalMs = 1000;
+      const mutationAuthStorageKey = ${JSON.stringify(WEBUI_MUTATION_AUTH_STORAGE_KEY)};
+      const mutationAuthHeader = ${JSON.stringify(WEBUI_MUTATION_AUTH_HEADER)};
+
+      function formatFieldList(fields) {
+        const values = Array.isArray(fields) ? fields.filter((field) => typeof field === "string" && field.length > 0) : [];
+        return values.length > 0 ? values.join(", ") : "the saved fields";
+      }
+
+      function setText(element, value) {
+        if (!element) {
+          return;
+        }
+        element.innerHTML = "";
+        element.textContent = value;
+      }
+
+      function formatToken(value) {
+        return String(value || "none").replace(/_/g, " ");
+      }
+
+      function titleCaseWords(value) {
+        return String(value)
+          .split(/\\s+/u)
+          .filter(Boolean)
+          .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+          .join(" ");
+      }
+
+      function formatStatus(value) {
+        return titleCaseWords(formatToken(value));
+      }
+
+      function appendDetail(element, className, text) {
+        const line = document.createElement("div");
+        line.className = className;
+        line.textContent = text;
+        element.appendChild(line);
+      }
+
+      function renderChecklist(element, items, emptyMessage) {
+        if (!element) {
+          return;
+        }
+        element.innerHTML = "";
+        const values = Array.isArray(items) && items.length > 0
+          ? items
+          : [{ title: emptyMessage, tone: "", meta: [], notes: [] }];
+        for (const entry of values) {
+          const listItem = document.createElement("li");
+          listItem.className = "checklist-item" + (entry.tone ? " checklist-item--" + entry.tone : "");
+          appendDetail(listItem, "checklist-item__title", entry.title);
+          for (const metaLine of entry.meta || []) {
+            appendDetail(listItem, "checklist-item__meta", metaLine);
+          }
+          for (const noteLine of entry.notes || []) {
+            appendDetail(listItem, "checklist-item__note", noteLine);
+          }
+          element.appendChild(listItem);
+        }
+      }
+
+      function fieldChecklistEntry(field) {
+        const posture = field.posture && field.posture.tier ? formatToken(field.posture.tier) : null;
+        const meta = [
+          "Current value: " + (field.value ?? "Unset"),
+          "Required: " + (field.required ? "yes" : "no") + " | Source: " + formatToken(field.metadata && field.metadata.source ? field.metadata.source : "unknown") + " | Type: " + formatToken(field.metadata && field.metadata.valueType ? field.metadata.valueType : "unknown"),
+        ];
+        if (posture) {
+          meta.push("Posture tier: " + posture);
+        }
+        return {
+          title: field.label + " [" + formatStatus(field.state) + "]",
+          tone: field.state === "invalid" ? "blocker" : "",
+          meta,
+          notes: [
+            field.posture && field.posture.summary ? "Posture: " + field.posture.summary : null,
+            field.message,
+          ].filter(Boolean),
+        };
+      }
+
+      function postureGroupChecklistEntries(report) {
+        const groups = Array.isArray(report.configPostureGroups) ? report.configPostureGroups : [];
+        if (groups.length === 0) {
+          return (report.fields || []).map(fieldChecklistEntry);
+        }
+
+        const entries = [];
+        for (const group of groups) {
+          const fields = Array.isArray(group.fields) ? group.fields : [];
+          entries.push({
+            title: group.label || formatStatus(group.tier),
+            tone: group.tier === "dangerous_explicit_opt_in" ? "danger" : "",
+            meta: [
+              "Posture tier: " + formatToken(group.tier),
+              "Fields: " + fields.length,
+            ],
+            notes: [group.summary || ""].filter(Boolean),
+          });
+          for (const field of fields) {
+            entries.push(fieldChecklistEntry(field));
+          }
+        }
+        return entries;
+      }
+
+      async function readJson(path, init) {
+        const response = await fetch(path, init || { headers: { Accept: "application/json" } });
+        if (!response.ok) {
+          let message = "Request failed";
+          try {
+            const body = await response.json();
+            message = body.error || message;
+          } catch {}
+          throw new Error(path + ": " + message);
+        }
+        return response.json();
+      }
+
+      async function writeJson(path, body) {
+        return postMutationJsonWithAuth(fetch, window, path, body, {
+          mutationAuthStorageKey,
+          mutationAuthHeader,
+        });
+      }
+
+      function summarizeFields(fields) {
+        const values = Array.isArray(fields) ? fields : [];
+        const requiredFields = values.filter((field) => field.required);
+        const configuredRequired = requiredFields.filter((field) => field.state === "configured").length;
+        return configuredRequired + " of " + requiredFields.length + " required setup fields configured.";
+      }
+
+      function summarizeHostReadiness(report) {
+        const checks = (report.hostReadiness && report.hostReadiness.checks) || [];
+        const overall = report.hostReadiness ? formatStatus(report.hostReadiness.overallStatus) : "Not Ready";
+        const noun = checks.length === 1 ? "check" : "checks";
+        return "Overall host readiness: " + overall + " across " + checks.length + " " + noun + ".";
+      }
+
+      function editableFields(report) {
+        const values = Array.isArray(report && report.fields) ? report.fields.slice() : [];
+        const order = new Map(editableFieldOrder.map((key, index) => [key, index]));
+        return values
+          .filter((field) => field && field.metadata && field.metadata.editable)
+          .sort((left, right) => (order.get(left.key) ?? 999) - (order.get(right.key) ?? 999));
+      }
+
+      function normalizeReviewProviderValue(report) {
+        const profile = report && report.providerPosture ? report.providerPosture.profile : "none";
+        return reviewProviderOptions.some((option) => option.value === profile) ? profile : "none";
+      }
+
+      function normalizeSelectValue(options, value) {
+        return options.some((option) => option.value === value) ? value : "";
+      }
+
+      function createFieldInput(field, report) {
+        if (field.key === "reviewProvider") {
+          const select = document.createElement("select");
+          select.id = "setup-input-" + field.key;
+          select.className = "field-editor__input";
+          select.disabled = saveInFlight;
+          for (const option of reviewProviderOptions) {
+            const optionElement = document.createElement("option");
+            optionElement.value = option.value;
+            optionElement.textContent = option.label;
+            select.appendChild(optionElement);
+          }
+          select.value = normalizeReviewProviderValue(report);
+          return select;
+        }
+
+        if (field.key === "trustMode" || field.key === "executionSafetyMode") {
+          const options = field.key === "trustMode" ? trustModeOptions : executionSafetyModeOptions;
+          const currentValue = typeof field.value === "string" ? field.value : "";
+          const selectedValue = normalizeSelectValue(options, currentValue);
+          const select = document.createElement("select");
+          select.id = "setup-input-" + field.key;
+          select.className = "field-editor__input";
+          select.disabled = saveInFlight;
+          if (selectedValue === "") {
+            const placeholder = document.createElement("option");
+            placeholder.value = "";
+            placeholder.textContent = "Select an option";
+            select.appendChild(placeholder);
+          }
+          for (const option of options) {
+            const optionElement = document.createElement("option");
+            optionElement.value = option.value;
+            optionElement.textContent = option.label;
+            select.appendChild(optionElement);
+          }
+          select.value = selectedValue;
+          return select;
+        }
+
+        const input = document.createElement("input");
+        input.id = "setup-input-" + field.key;
+        input.className = "field-editor__input";
+        input.type = "text";
+        input.value = typeof field.value === "string" ? field.value : "";
+        input.disabled = saveInFlight;
+        return input;
+      }
+
+      function renderEditor(field, report) {
+        const wrapper = document.createElement("div");
+        wrapper.className = "field-editor";
+
+        const label = document.createElement("div");
+        label.className = "field-editor__label";
+        label.textContent = field.label + (field.required ? " *" : "");
+        wrapper.appendChild(label);
+
+        const hint = document.createElement("div");
+        hint.className = "field-editor__hint";
+        hint.textContent = field.message;
+        wrapper.appendChild(hint);
+
+        const meta = document.createElement("div");
+        meta.className = "field-editor__hint";
+        meta.textContent =
+          "Type: " +
+          formatToken(field.metadata && field.metadata.valueType ? field.metadata.valueType : "unknown") +
+          " | Current: " +
+          (field.value ?? "Unset");
+        wrapper.appendChild(meta);
+
+        wrapper.appendChild(createFieldInput(field, report));
+        return wrapper;
+      }
+
+      function renderForm(report) {
+        currentReport = report;
+        setText(
+          elements.formSummary,
+          report.ready
+            ? "Setup is configured. You can still update the typed setup fields here."
+            : "Edit the blocking setup fields and save only through the typed setup config API.",
+        );
+
+        if (!elements.editors) {
+          return;
+        }
+        elements.editors.innerHTML = "";
+        const fields = editableFields(report);
+        if (fields.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "field-editor";
+          empty.textContent = "No editable setup fields were reported.";
+          elements.editors.appendChild(empty);
+          return;
+        }
+        for (const field of fields) {
+          elements.editors.appendChild(renderEditor(field, report));
+        }
+      }
+
+      function setSaveStatus(message) {
+        setText(elements.saveStatus, message);
+      }
+
+      function setFormDisabled(disabled) {
+        saveInFlight = disabled;
+        if (elements.saveButton) {
+          elements.saveButton.disabled = disabled;
+        }
+        if (elements.localCiAdoptRecommended) {
+          const normalizedLocalCiContract = normalizeBrowserLocalCiContract(currentReport && currentReport.localCiContract);
+          elements.localCiAdoptRecommended.disabled =
+            disabled ||
+            elements.localCiAdoptRecommended.hidden ||
+            !canAdoptBrowserLocalCiRecommendedCommand(
+              normalizedLocalCiContract,
+              Boolean(document.getElementById("setup-input-localCiCommand")),
+            );
+        }
+        if (elements.localCiDismissRecommended) {
+          const normalizedLocalCiContract = normalizeBrowserLocalCiContract(currentReport && currentReport.localCiContract);
+          elements.localCiDismissRecommended.disabled =
+            disabled ||
+            elements.localCiDismissRecommended.hidden ||
+            !canDismissBrowserLocalCiRecommendedCommand(normalizedLocalCiContract);
+        }
+        syncRestartButton();
+        for (const field of editableFields(currentReport || {})) {
+          const input = document.getElementById("setup-input-" + field.key);
+          if (input) {
+            input.disabled = disabled;
+          }
+        }
+      }
+
+      function managedRestartCapability(source) {
+        const capability = source && source.managedRestart && typeof source.managedRestart === "object"
+          ? source.managedRestart
+          : null;
+        return capability && capability.supported === true
+          ? capability
+          : (capability || {
+            supported: false,
+            launcher: null,
+            state: "unavailable",
+            summary: "Managed restart is unavailable because this WebUI process was not started with explicit launcher-backed restart support.",
+          });
+      }
+
+      function delay(ms) {
+        return new Promise((resolve) => {
+          setTimeout(resolve, ms);
+        });
+      }
+
+      function reconnectPollDelayMs(failureCount) {
+        const exponent = Math.max(0, Number(failureCount) || 0);
+        return Math.min(reconnectPollInitialIntervalMs * Math.pow(2, exponent), reconnectPollMaxIntervalMs);
+      }
+
+      function syncRestartButton() {
+        if (!elements.restartButton) {
+          return;
+        }
+        const capability = managedRestartCapability(latestSaveResult || currentReport);
+        elements.restartButton.disabled = (
+          saveInFlight ||
+          restartInFlight ||
+          restartRequested ||
+          !latestSaveResult ||
+          !latestSaveResult.restartRequired ||
+          !capability.supported
+        );
+      }
+
+      function renderRestartOutcome(result) {
+        if (!result) {
+          restartRequested = false;
+          latestSaveResult = null;
+          setText(elements.restartStatus, "No recent save");
+          setText(
+            elements.restartDetails,
+            "Save typed setup changes to see whether they take effect immediately or require a supervisor restart.",
+          );
+          setText(elements.restartGuidance, managedRestartCapability(currentReport).summary);
+          syncRestartButton();
+          return;
+        }
+
+        latestSaveResult = result;
+        const capability = managedRestartCapability(result);
+        const changedFields = formatFieldList(result.restartTriggeredByFields && result.restartTriggeredByFields.length > 0
+          ? result.restartTriggeredByFields
+          : result.updatedFields);
+        if (result.restartRequired) {
+          setText(elements.restartStatus, "Restart required");
+          if (capability.supported) {
+            setText(
+              elements.restartDetails,
+              "Saved changes to " +
+                changedFields +
+                " require a supervisor restart before they take effect. Restart now reconnects the worker while this launcher-managed WebUI shell stays available.",
+            );
+            setText(elements.restartGuidance, capability.summary);
+          } else {
+            setText(
+              elements.restartDetails,
+              "Saved changes to " +
+                changedFields +
+                " require a supervisor restart before they take effect. Restart now is unavailable for this unmanaged WebUI session. Restart the supervisor manually and then refresh this page.",
+            );
+            setText(elements.restartGuidance, "Manual next step: restart the supervisor process, then refresh /setup.");
+          }
+          syncRestartButton();
+          return;
+        }
+
+        restartRequested = false;
+        setText(elements.restartStatus, "Saved and effective");
+        setText(
+          elements.restartDetails,
+          "Saved changes to " + changedFields + " are already effective. No supervisor restart is required for this save.",
+        );
+        setText(
+          elements.restartGuidance,
+          capability.supported ? capability.summary : "Restart controls remain disabled because this save is already effective.",
+        );
+        syncRestartButton();
+      }
+
+      async function monitorManagedRestartReconnect() {
+        const pollToken = ++reconnectPollToken;
+        let unsuccessfulPollCount = 0;
+        setSaveStatus("Waiting for the restarted worker to reconnect...");
+
+        while (restartRequested && pollToken === reconnectPollToken) {
+          try {
+            const report = await refreshSetupReadiness();
+            const capability = managedRestartCapability(report);
+            if (capability.state !== "ready") {
+              setText(elements.restartGuidance, capability.summary);
+              await delay(reconnectPollDelayMs(unsuccessfulPollCount));
+              unsuccessfulPollCount += 1;
+              continue;
+            }
+
+            if (latestSaveResult && latestSaveResult.restartRequired) {
+              latestSaveResult = {
+                ...latestSaveResult,
+                restartRequired: false,
+                restartScope: null,
+                restartTriggeredByFields: [],
+                managedRestart: capability,
+              };
+            }
+            restartRequested = false;
+            renderRestartOutcome(latestSaveResult);
+            setSaveStatus("Restarted worker reconnected.");
+            return;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            setText(elements.restartGuidance, "Waiting for the restarted worker to reconnect: " + message);
+            await delay(reconnectPollDelayMs(unsuccessfulPollCount));
+            unsuccessfulPollCount += 1;
+          }
+        }
+      }
+
+      function renderSetup(report) {
+        renderForm(report);
+        syncRestartButton();
+        setText(
+          elements.overallStatus,
+          report.ready ? "configured" : report.overallStatus,
+        );
+        setText(
+          elements.overallCaption,
+          report.ready
+            ? "All required setup checks are configured."
+            : "Resolve blockers before relying on steady-state dashboard actions.",
+        );
+        setText(
+          elements.summary,
+          "Config path: " +
+            report.configPath +
+            " | Setup ready: " +
+            (report.ready ? "yes" : "no") +
+            " | Blockers: " +
+            report.blockers.length,
+        );
+        setText(
+          elements.blockerSummary,
+          report.blockers.length > 0
+            ? report.blockers.length +
+              " blocking condition" +
+              (report.blockers.length === 1 ? " needs" : "s need") +
+              " attention before first-run setup is complete."
+            : "No blocking setup conditions remain.",
+        );
+        renderChecklist(
+          elements.blockers,
+          (report.blockers || []).map((blocker) => ({
+            title: blocker.message,
+            tone: "blocker",
+            meta: [
+              "Blocker code: " + formatToken(blocker.code),
+              "Related fields: " + (blocker.fieldKeys && blocker.fieldKeys.length > 0 ? blocker.fieldKeys.join(", ") : "none"),
+            ],
+            notes: [
+              "Suggested remediation: " + blocker.remediation.summary,
+              "Remediation kind: " + formatToken(blocker.remediation.kind),
+            ],
+          })),
+          "No setup blockers remain. Open /dashboard for steady-state operations.",
+        );
+        renderChecklist(
+          elements.nextActions,
+          (report.nextActions || []).map((action) => ({
+            title: action.summary,
+            tone: action.required ? "blocker" : "normal",
+            meta: [
+              "Action: " + formatToken(action.action),
+              "Source: " + formatToken(action.source),
+              "Required: " + (action.required ? "yes" : "no"),
+              "Priority: " + action.priority,
+            ],
+            notes: [
+              "Related fields: " + (action.fieldKeys && action.fieldKeys.length > 0 ? action.fieldKeys.join(", ") : "none"),
+            ],
+          })),
+          "No setup next actions reported.",
+        );
+        setText(elements.fieldSummary, summarizeFields(report.fields));
+        renderChecklist(
+          elements.fields,
+          postureGroupChecklistEntries(report),
+          "No setup fields reported.",
+        );
+        setText(elements.hostSummary, summarizeHostReadiness(report));
+        renderChecklist(
+          elements.hostChecks,
+          ((report.hostReadiness && report.hostReadiness.checks) || []).map(
+            (check) => ({
+              title: titleCaseWords(formatToken(check.name)) + " [" + formatStatus(check.status) + "]",
+              meta: [check.summary],
+              notes: (check.details || []).map((detail) => "Detail: " + detail),
+            }),
+          ),
+          "No host readiness checks reported.",
+        );
+        setText(elements.providerPosture, report.providerPosture ? report.providerPosture.summary : "No provider posture reported.");
+        renderChecklist(
+          elements.providerDetails,
+          report.providerPosture
+            ? [{
+              title: "Provider profile: " + formatStatus(report.providerPosture.profile),
+              tone: "",
+              meta: [
+                "Provider: " + report.providerPosture.provider,
+                "Signal source: " + formatToken(report.providerPosture.signalSource),
+              ],
+              notes: [
+                "Configured reviewers: " + (report.providerPosture.reviewers.length > 0 ? report.providerPosture.reviewers.join(", ") : "none"),
+                "Configured: " + (report.providerPosture.configured ? "yes" : "no"),
+              ],
+            }]
+            : [],
+          "No provider posture details reported.",
+        );
+        const modelRoutingPosture = report.modelRoutingPosture || { summary: "No model routing posture reported.", targets: [] };
+        setText(elements.modelRoutingSummary, modelRoutingPosture.summary || "No model routing posture reported.");
+        renderChecklist(
+          elements.modelRoutingDetails,
+          (Array.isArray(modelRoutingPosture.targets) ? modelRoutingPosture.targets : []).map(
+            (target) => ({
+              title: target.label + " [" + formatStatus(target.strategy) + "]",
+              tone: target.missingExplicitModel ? "blocker" : "",
+              meta: [
+                "Model value: " + (target.model ?? "Unset"),
+                "Configured override: " + (target.overrideConfigured ? "yes" : "no"),
+              ],
+              notes: [target.summary, target.guidance],
+            }),
+          ),
+          "No model routing details reported.",
+        );
+        setText(elements.trustPosture, report.trustPosture ? report.trustPosture.summary : "No trust posture reported.");
+        renderChecklist(
+          elements.trustDetails,
+          report.trustPosture
+            ? [{
+              title: "Trust mode: " + formatStatus(report.trustPosture.trustMode),
+              tone: report.trustPosture.configured === false ? "blocker" : "",
+              meta: ["Execution safety: " + formatStatus(report.trustPosture.executionSafetyMode)],
+              notes: [
+                "Explicit setup decision: " + (report.trustPosture.configured === false ? "needed" : "configured"),
+                report.trustPosture.warning ? "Warning: " + report.trustPosture.warning : "Warning: none",
+              ],
+            }]
+            : [],
+          "No trust posture details reported.",
+        );
+        const localCiContract = normalizeBrowserLocalCiContract(report.localCiContract || null);
+        setText(elements.localCiSummary, localCiContract.summary);
+        if (elements.localCiAdoptRecommended) {
+          const canAdoptRecommended = canAdoptBrowserLocalCiRecommendedCommand(
+            localCiContract,
+            Boolean(document.getElementById("setup-input-localCiCommand")),
+          );
+          elements.localCiAdoptRecommended.hidden = !canAdoptRecommended;
+          elements.localCiAdoptRecommended.disabled = saveInFlight || !canAdoptRecommended;
+        }
+        if (elements.localCiDismissRecommended) {
+          const canDismissRecommended = canDismissBrowserLocalCiRecommendedCommand(localCiContract);
+          elements.localCiDismissRecommended.hidden = !canDismissRecommended;
+          elements.localCiDismissRecommended.disabled = saveInFlight || !canDismissRecommended;
+        }
+        renderChecklist(
+          elements.localCiDetails,
+          buildBrowserLocalCiChecklistEntries(localCiContract),
+          "No local CI contract details reported.",
+        );
+      }
+
+      function collectSetupChanges() {
+        if (!currentReport) {
+          throw new Error("Setup readiness has not loaded yet.");
+        }
+
+        const changes = {};
+        for (const field of editableFields(currentReport)) {
+          const input = document.getElementById("setup-input-" + field.key);
+          const rawValue = input && typeof input.value === "string" ? input.value.trim() : "";
+          if (field.key === "reviewProvider") {
+            if (rawValue !== "") {
+              changes.reviewProvider = rawValue;
+            }
+            continue;
+          }
+          if (field.key === "localCiCommand") {
+            if (rawValue !== "") {
+              changes.localCiCommand = rawValue;
+            } else if (field.value !== null) {
+              changes.localCiCommand = null;
+            }
+            continue;
+          }
+          if (field.key === "trustMode" || field.key === "executionSafetyMode") {
+            const currentValue = typeof field.value === "string" ? field.value : "";
+            const options = field.key === "trustMode" ? trustModeOptions : executionSafetyModeOptions;
+            const normalizedValue = normalizeSelectValue(options, rawValue);
+            if (normalizedValue !== "" && normalizedValue !== currentValue) {
+              changes[field.key] = normalizedValue;
+            }
+            continue;
+          }
+          if (rawValue !== "") {
+            changes[field.key] = rawValue;
+          }
+        }
+
+        if (Object.keys(changes).length === 0) {
+          throw new Error("Enter at least one setup value before saving.");
+        }
+        return changes;
+      }
+
+      async function refreshSetupReadiness() {
+        const report = await readJson("/api/setup-readiness");
+        renderSetup(report);
+        if (!latestSaveResult) {
+          renderRestartOutcome(null);
+        } else {
+          syncRestartButton();
+        }
+        return report;
+      }
+
+      async function handleSetupSubmit(event) {
+        event.preventDefault();
+        if (saveInFlight) {
+          return;
+        }
+
+        let changes;
+        try {
+          changes = collectSetupChanges();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          setSaveStatus(message);
+          return;
+        }
+
+        setFormDisabled(true);
+        setSaveStatus("Saving setup changes...");
+        try {
+          const result = await writeJson("/api/setup-config", { changes });
+          setSaveStatus("Revalidating setup readiness...");
+          await refreshSetupReadiness();
+          renderRestartOutcome(result);
+          const updatedCount = Array.isArray(result.updatedFields) ? result.updatedFields.length : Object.keys(changes).length;
+          setSaveStatus("Saved " + updatedCount + " setup field" + (updatedCount === 1 ? "" : "s") + ".");
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          setSaveStatus("Setup save failed: " + message);
+        } finally {
+          setFormDisabled(false);
+        }
+      }
+
+      async function handleManagedRestartClick() {
+        const capability = managedRestartCapability(latestSaveResult || currentReport);
+        if (
+          restartRequested ||
+          restartInFlight ||
+          !latestSaveResult ||
+          !latestSaveResult.restartRequired ||
+          !capability.supported
+        ) {
+          syncRestartButton();
+          return;
+        }
+
+        restartInFlight = true;
+        syncRestartButton();
+        setText(elements.restartGuidance, "Requesting launcher-managed restart...");
+        try {
+          const result = await writeJson("/api/commands/managed-restart", {});
+          restartRequested = true;
+          setText(elements.restartGuidance, result.summary || capability.summary);
+          void monitorManagedRestartReconnect();
+        } catch (error) {
+          restartRequested = false;
+          const message = error instanceof Error ? error.message : String(error);
+          setText(elements.restartGuidance, message);
+        } finally {
+          restartInFlight = false;
+          syncRestartButton();
+        }
+      }
+
+      function handleAdoptRecommendedLocalCiClick() {
+        if (!currentReport || !currentReport.localCiContract || !currentReport.localCiContract.recommendedCommand) {
+          return;
+        }
+
+        const localCiInput = document.getElementById("setup-input-localCiCommand");
+        if (!localCiInput) {
+          return;
+        }
+
+        localCiInput.value = currentReport.localCiContract.recommendedCommand;
+        setSaveStatus("Recommended local CI command copied into the setup field. Save to opt in.");
+      }
+
+      async function handleDismissRecommendedLocalCiClick() {
+        if (!currentReport || !canDismissBrowserLocalCiRecommendedCommand(currentReport.localCiContract)) {
+          return;
+        }
+
+        setFormDisabled(true);
+        setSaveStatus("Dismissing recommended local CI command...");
+        try {
+          const result = await writeJson("/api/setup-config", { changes: { localCiCandidateDismissed: true } });
+          setSaveStatus("Revalidating setup readiness...");
+          await refreshSetupReadiness();
+          renderRestartOutcome(result);
+          setSaveStatus("Dismissed the recommended local CI command. localCiCommand remains unset.");
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          setSaveStatus("Local CI dismissal failed: " + message);
+        } finally {
+          setFormDisabled(false);
+        }
+      }
+
+      async function bootstrap() {
+        if (elements.form) {
+          elements.form.addEventListener("submit", handleSetupSubmit);
+        }
+        if (elements.localCiAdoptRecommended) {
+          elements.localCiAdoptRecommended.addEventListener("click", handleAdoptRecommendedLocalCiClick);
+        }
+        if (elements.localCiDismissRecommended) {
+          elements.localCiDismissRecommended.addEventListener("click", handleDismissRecommendedLocalCiClick);
+        }
+        if (elements.restartButton) {
+          elements.restartButton.addEventListener("click", handleManagedRestartClick);
+        }
+        setSaveStatus("Loading setup readiness...");
+        try {
+          await refreshSetupReadiness();
+          setSaveStatus("Edit the setup fields and save changes to revalidate readiness.");
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          setText(elements.overallStatus, "error");
+          setText(elements.overallCaption, "Setup readiness could not be loaded.");
+          setText(elements.summary, message);
+          setText(elements.blockerSummary, "Setup readiness request failed.");
+          renderChecklist(
+            elements.blockers,
+            [{ title: message, tone: "blocker", meta: [], notes: [] }],
+            "No setup blockers reported.",
+          );
+          setSaveStatus("Setup readiness failed to load.");
+        }
+      }
+
+      void bootstrap();
+`;
+}

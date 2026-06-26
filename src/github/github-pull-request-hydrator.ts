@@ -1,0 +1,360 @@
+import { CommandOptions, CommandResult } from "../core/command";
+import {
+  applyConfiguredBotReviewSummary,
+  buildConfiguredBotReviewSummary,
+  PullRequestCopilotReviewLifecycleResponse,
+} from "./github-hydration";
+import { ConfiguredBotReviewSummary } from "./github-review-signals";
+import { SupervisorConfig } from "../core/types";
+import { parseJson, truncate } from "../core/utils";
+import type { CopilotReviewState, GitHubPullRequest } from "./types";
+
+const COPILOT_REVIEW_TRANSITION_CACHE_TTL_MS = 30_000;
+const COPILOT_REVIEW_CACHE_MAX_ENTRIES = 128;
+
+interface CachedCopilotReviewLifecycleEntry {
+  fetchedAtMs: number;
+  state: CopilotReviewState | null;
+  promise: Promise<ConfiguredBotReviewSummary>;
+}
+
+class ConfiguredBotReviewSummaryCache {
+  private readonly entries = new Map<string, CachedCopilotReviewLifecycleEntry>();
+
+  constructor(private readonly now: () => number = Date.now) {}
+
+  get(cacheKey: string): Promise<ConfiguredBotReviewSummary> | null {
+    const nowMs = this.now();
+    const cachedLifecycle = this.entries.get(cacheKey);
+    if (!cachedLifecycle) {
+      return null;
+    }
+
+    if (cachedLifecycle.state === null) {
+      this.touch(cacheKey, cachedLifecycle);
+      return cachedLifecycle.promise;
+    }
+
+    if (cachedLifecycle.state === "arrived") {
+      this.touch(cacheKey, cachedLifecycle);
+      return cachedLifecycle.promise;
+    }
+
+    if (nowMs - cachedLifecycle.fetchedAtMs < COPILOT_REVIEW_TRANSITION_CACHE_TTL_MS) {
+      this.touch(cacheKey, cachedLifecycle);
+      return cachedLifecycle.promise;
+    }
+
+    this.entries.delete(cacheKey);
+    return null;
+  }
+
+  set(
+    cacheKey: string,
+    lifecyclePromiseFactory: () => Promise<ConfiguredBotReviewSummary>,
+  ): Promise<ConfiguredBotReviewSummary> {
+    const cacheEntry: CachedCopilotReviewLifecycleEntry = {
+      fetchedAtMs: this.now(),
+      state: null,
+      promise: Promise.resolve({
+        lifecycle: { state: "not_requested", requestedAt: null, arrivedAt: null },
+        topLevelReview: { strength: null, submittedAt: null },
+        currentHeadObservedAt: null,
+        currentHeadObservationSource: null,
+        currentHeadStatusState: null,
+        latestReviewedCommitSha: null,
+        currentHeadCiGreenAt: null,
+        rateLimitWarningAt: null,
+        draftSkipAt: null,
+        codexConnectorReviewRequest: null,
+      }),
+    };
+    const lifecyclePromise = lifecyclePromiseFactory()
+      .then((summary) => {
+        cacheEntry.fetchedAtMs = this.now();
+        cacheEntry.state = summary.lifecycle.state;
+        return summary;
+      })
+      .catch((error) => {
+        this.entries.delete(cacheKey);
+        throw error;
+      });
+
+    cacheEntry.promise = lifecyclePromise;
+    this.touch(cacheKey, cacheEntry);
+
+    while (this.entries.size > COPILOT_REVIEW_CACHE_MAX_ENTRIES) {
+      const oldestKey = this.entries.keys().next().value;
+      if (!oldestKey) {
+        break;
+      }
+      this.entries.delete(oldestKey);
+    }
+
+    return lifecyclePromise;
+  }
+
+  private touch(cacheKey: string, entry: CachedCopilotReviewLifecycleEntry): void {
+    this.entries.delete(cacheKey);
+    this.entries.set(cacheKey, entry);
+  }
+}
+
+type GitHubCommandExecutor = (args: string[], options?: CommandOptions) => Promise<CommandResult>;
+
+export class GitHubPullRequestHydrator {
+  private readonly reviewSummaryCache: ConfiguredBotReviewSummaryCache;
+
+  constructor(
+    private readonly config: SupervisorConfig,
+    private readonly runGhCommand: GitHubCommandExecutor,
+    now: () => number = Date.now,
+  ) {
+    this.reviewSummaryCache = new ConfiguredBotReviewSummaryCache(now);
+  }
+
+  async hydrateForAction(pr: GitHubPullRequest | null): Promise<GitHubPullRequest | null> {
+    if (!pr) {
+      return null;
+    }
+
+    try {
+      const summary = await this.fetchConfiguredBotReviewSummary(pr.number, pr.headRefOid);
+      return withHydrationProvenance(applyConfiguredBotReviewSummary(pr, summary), "fresh");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`Failed to hydrate Copilot review lifecycle for PR #${pr.number}: ${truncate(message, 500) ?? "unknown error"}`);
+      return withHydrationProvenance(applyConfiguredBotReviewSummary(pr, null), "fresh");
+    }
+  }
+
+  async hydrateForStatus(pr: GitHubPullRequest | null): Promise<GitHubPullRequest | null> {
+    if (!pr) {
+      return null;
+    }
+
+    const cacheKey = `${pr.number}:${pr.headRefOid}`;
+    const cachedSummary = this.reviewSummaryCache.get(cacheKey);
+    if (cachedSummary) {
+      const summary = await cachedSummary;
+      return withHydrationProvenance(applyConfiguredBotReviewSummary(pr, summary), "cached");
+    }
+
+    const summaryPromise = this.reviewSummaryCache.set(
+      cacheKey,
+      () => this.fetchConfiguredBotReviewSummary(pr.number, pr.headRefOid),
+    );
+
+    try {
+      const summary = await summaryPromise;
+      return withHydrationProvenance(applyConfiguredBotReviewSummary(pr, summary), "fresh");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`Failed to hydrate Copilot review lifecycle for PR #${pr.number}: ${truncate(message, 500) ?? "unknown error"}`);
+      return withHydrationProvenance(applyConfiguredBotReviewSummary(pr, null), "fresh");
+    }
+  }
+
+  async hydrate(pr: GitHubPullRequest | null): Promise<GitHubPullRequest | null> {
+    return this.hydrateForStatus(pr);
+  }
+
+  private async runGhJsonCommand(args: string[], options: CommandOptions = {}): Promise<CommandResult> {
+    return this.runGhCommand(args, { ...options, stdoutCaptureLimitBytes: null });
+  }
+
+  private async fetchConfiguredBotReviewSummary(
+    prNumber: number,
+    currentHeadOid: string,
+  ): Promise<ConfiguredBotReviewSummary> {
+    const { owner, repo } = repoOwnerAndName(this.config.repoSlug);
+    const query = `
+      query($owner: String!, $repo: String!, $number: Int!) {
+        repository(owner: $owner, name: $repo) {
+          pullRequest(number: $number) {
+            reviewRequests(first: 100) {
+              nodes {
+                requestedReviewer {
+                  ... on Bot {
+                    login
+                  }
+                  ... on User {
+                    login
+                  }
+                  ... on Mannequin {
+                    login
+                  }
+                  ... on Team {
+                    slug
+                  }
+                }
+              }
+            }
+            reviews(last: 100) {
+              pageInfo {
+                hasPreviousPage
+              }
+              nodes {
+                submittedAt
+                state
+                body
+                commit {
+                  oid
+                }
+                author {
+                  login
+                }
+              }
+            }
+            comments(last: 100) {
+              nodes {
+                id
+                databaseId
+                createdAt
+                body
+                url
+                viewerDidAuthor
+                author {
+                  login
+                }
+              }
+            }
+            reviewThreads(first: 100) {
+              nodes {
+                comments(last: 100) {
+                  nodes {
+                    createdAt
+                    originalCommit {
+                      oid
+                    }
+                    author {
+                      login
+                    }
+                  }
+                }
+              }
+            }
+            timelineItems(last: 100, itemTypes: [REVIEW_REQUESTED_EVENT, REVIEW_REQUEST_REMOVED_EVENT]) {
+              nodes {
+                __typename
+                ... on ReviewRequestedEvent {
+                  createdAt
+                  requestedReviewer {
+                    ... on Bot {
+                      login
+                    }
+                    ... on User {
+                      login
+                    }
+                    ... on Mannequin {
+                      login
+                    }
+                    ... on Team {
+                      slug
+                    }
+                  }
+                }
+                ... on ReviewRequestRemovedEvent {
+                  createdAt
+                  requestedReviewer {
+                    ... on Bot {
+                      login
+                    }
+                    ... on User {
+                      login
+                    }
+                    ... on Mannequin {
+                      login
+                    }
+                    ... on Team {
+                      slug
+                    }
+                  }
+                }
+              }
+            }
+            commits(last: 1) {
+              nodes {
+                commit {
+                  oid
+                  statusCheckRollup {
+                    contexts(last: 100) {
+                      nodes {
+                        __typename
+                        ... on StatusContext {
+                          context
+                          description
+                          state
+                          createdAt
+                          isRequired(pullRequestNumber: $number)
+                          creator {
+                            login
+                          }
+                        }
+                        ... on CheckRun {
+                          name
+                          status
+                          conclusion
+                          startedAt
+                          completedAt
+                          isRequired(pullRequestNumber: $number)
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    const result = await this.runGhJsonCommand([
+      "api",
+      "graphql",
+      "-f",
+      `query=${query}`,
+      "-F",
+      `owner=${owner}`,
+      "-F",
+      `repo=${repo}`,
+      "-F",
+      `number=${prNumber}`,
+    ]);
+
+    const payload = parseJson<{
+      data?: {
+        repository?: {
+          pullRequest?: PullRequestCopilotReviewLifecycleResponse | null;
+        };
+      };
+    }>(result.stdout, `gh api graphql copilot review lifecycle pr=${prNumber}`);
+
+    return buildConfiguredBotReviewSummary(
+      payload.data?.repository?.pullRequest,
+      this.config.reviewBotLogins,
+      currentHeadOid,
+      { prNumber, headSha: currentHeadOid },
+    );
+  }
+}
+
+function withHydrationProvenance(
+  pr: GitHubPullRequest,
+  hydrationProvenance: NonNullable<GitHubPullRequest["hydrationProvenance"]>,
+): GitHubPullRequest {
+  return {
+    ...pr,
+    hydrationProvenance,
+  };
+}
+
+function repoOwnerAndName(repoSlug: string): { owner: string; repo: string } {
+  const [owner, repo] = repoSlug.split("/", 2);
+  if (!owner || !repo) {
+    throw new Error(`Invalid repoSlug: ${repoSlug}`);
+  }
+
+  return { owner, repo };
+}

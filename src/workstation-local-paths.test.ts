@@ -1,0 +1,590 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { classifyWorkstationLocalPathCandidate, findForbiddenWorkstationLocalPaths } from "./workstation-local-paths";
+
+const TRUSTED_GENERATED_DURABLE_ARTIFACT_MARKDOWN_MARKER =
+  "<!-- codex-supervisor-provenance: trusted-generated-durable-artifact/v1 -->";
+
+function buildUnixHomePath(owner: string, ...segments: string[]): string {
+  return ["/", "home", "/", owner, ...segments.flatMap((segment) => ["/", segment])].join("");
+}
+
+function buildMacHomePath(owner: string, ...segments: string[]): string {
+  return ["/", "Users", "/", owner, ...segments.flatMap((segment) => ["/", segment])].join("");
+}
+
+function buildWindowsHomePath(owner: string, ...segments: string[]): string {
+  return ["C:", "\\", "Users", "\\", owner, ...segments.flatMap((segment) => ["\\", segment])].join("");
+}
+
+function git(cwd: string, ...args: string[]): string {
+  return execFileSync("git", ["-C", cwd, ...args], {
+    encoding: "utf8",
+  });
+}
+
+async function createTrackedRepo(): Promise<string> {
+  const repoPath = await fs.mkdtemp(path.join(os.tmpdir(), "workstation-local-paths-"));
+  git(repoPath, "init", "-b", "main");
+  git(repoPath, "config", "user.name", "Codex Supervisor");
+  git(repoPath, "config", "user.email", "codex@example.test");
+  await fs.writeFile(path.join(repoPath, "README.md"), "# fixture\n", "utf8");
+  git(repoPath, "add", "README.md");
+  git(repoPath, "commit", "-m", "seed");
+  return repoPath;
+}
+
+test("classifyWorkstationLocalPathCandidate distinguishes workstation homes from known container homes", () => {
+  assert.deepEqual(classifyWorkstationLocalPathCandidate(buildUnixHomePath("alice", "dev", "private-repo")), {
+    blocked: true,
+    label: "/home/<user>/",
+    reason: "Linux user home directory",
+  });
+  assert.deepEqual(classifyWorkstationLocalPathCandidate(buildMacHomePath("alice", "Dev", "private-repo")), {
+    blocked: true,
+    label: "/Users/<user>/",
+    reason: "macOS user home directory",
+  });
+  assert.deepEqual(classifyWorkstationLocalPathCandidate(buildWindowsHomePath("Alice", "private-repo")), {
+    blocked: true,
+    label: "C:\\Users\\<user>\\",
+    reason: "Windows user home directory",
+  });
+  assert.deepEqual(classifyWorkstationLocalPathCandidate(buildUnixHomePath("node", ".n8n")), {
+    blocked: false,
+    label: "/home/node/",
+    reason: 'allowed known container home owner "node"',
+  });
+});
+
+test("findForbiddenWorkstationLocalPaths ignores /home/node container paths while keeping workstation homes blocked", async (t) => {
+  const repoPath = await createTrackedRepo();
+  t.after(async () => {
+    await fs.rm(repoPath, { recursive: true, force: true });
+  });
+
+  await fs.mkdir(path.join(repoPath, "n8n"), { recursive: true });
+  await fs.writeFile(
+    path.join(repoPath, "n8n", "docker-compose.yml"),
+    [
+      "services:",
+      "  n8n:",
+      "    volumes:",
+      "      - /home/node/.n8n:/home/node/.n8n",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  await fs.mkdir(path.join(repoPath, "docs"), { recursive: true });
+  await fs.writeFile(
+    path.join(repoPath, "docs", "guide.md"),
+    [
+      `Linux host path: ${buildUnixHomePath("alice", "dev", "private-repo")}`,
+      `macOS host path: ${buildMacHomePath("alice", "Dev", "private-repo")}`,
+      `Windows host path: ${buildWindowsHomePath("Alice", "private-repo")}`,
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  git(repoPath, "add", "n8n/docker-compose.yml", "docs/guide.md");
+
+  const findings = await findForbiddenWorkstationLocalPaths(repoPath);
+
+  assert.equal(findings.length, 3);
+  assert.deepEqual(
+    findings.map((finding) => ({
+      filePath: finding.filePath,
+      line: finding.line,
+      prefix: finding.prefix,
+      reason: finding.reason,
+      match: finding.match,
+    })),
+    [
+      {
+        filePath: "docs/guide.md",
+        line: 1,
+        prefix: "/home/<user>/",
+        reason: "Linux user home directory",
+        match: buildUnixHomePath("alice", "dev", "private-repo"),
+      },
+      {
+        filePath: "docs/guide.md",
+        line: 2,
+        prefix: "/Users/<user>/",
+        reason: "macOS user home directory",
+        match: buildMacHomePath("alice", "Dev", "private-repo"),
+      },
+      {
+        filePath: "docs/guide.md",
+        line: 3,
+        prefix: "C:\\Users\\<user>\\",
+        reason: "Windows user home directory",
+        match: buildWindowsHomePath("Alice", "private-repo"),
+      },
+    ],
+  );
+});
+
+test("findForbiddenWorkstationLocalPaths ignores HTTP URL path segments that resemble Linux homes", async (t) => {
+  const repoPath = await createTrackedRepo();
+  t.after(async () => {
+    await fs.rm(repoPath, { recursive: true, force: true });
+  });
+
+  await fs.mkdir(path.join(repoPath, "docs"), { recursive: true });
+  await fs.writeFile(
+    path.join(repoPath, "docs", "guide.md"),
+    [
+      `Public callback: https://example.test${buildUnixHomePath("alice", "dev", "private-repo")}/status`,
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  git(repoPath, "add", "docs/guide.md");
+
+  const findings = await findForbiddenWorkstationLocalPaths(repoPath);
+
+  assert.deepEqual(findings, []);
+});
+
+test("findForbiddenWorkstationLocalPaths keeps file URLs to workstation homes blocked", async (t) => {
+  const repoPath = await createTrackedRepo();
+  t.after(async () => {
+    await fs.rm(repoPath, { recursive: true, force: true });
+  });
+
+  await fs.mkdir(path.join(repoPath, "docs"), { recursive: true });
+  await fs.writeFile(
+    path.join(repoPath, "docs", "guide.md"),
+    [
+      `Linux file URL: file://${buildUnixHomePath("alice", "dev", "private-repo")}`,
+      `Linux file URL with authority: file://localhost${buildUnixHomePath("alice", "dev", "private-repo")}`,
+      `macOS file URL: file://${buildMacHomePath("alice", "Dev", "private-repo")}`,
+      `Windows file URL: file://${buildWindowsHomePath("Alice", "private-repo")}`,
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  git(repoPath, "add", "docs/guide.md");
+
+  const findings = await findForbiddenWorkstationLocalPaths(repoPath);
+
+  assert.deepEqual(
+    findings.map((finding) => ({
+      filePath: finding.filePath,
+      line: finding.line,
+      prefix: finding.prefix,
+      reason: finding.reason,
+      match: finding.match,
+    })),
+    [
+      {
+        filePath: "docs/guide.md",
+        line: 1,
+        prefix: "/home/<user>/",
+        reason: "Linux user home directory",
+        match: buildUnixHomePath("alice", "dev", "private-repo"),
+      },
+      {
+        filePath: "docs/guide.md",
+        line: 2,
+        prefix: "/home/<user>/",
+        reason: "Linux user home directory",
+        match: buildUnixHomePath("alice", "dev", "private-repo"),
+      },
+      {
+        filePath: "docs/guide.md",
+        line: 3,
+        prefix: "/Users/<user>/",
+        reason: "macOS user home directory",
+        match: buildMacHomePath("alice", "Dev", "private-repo"),
+      },
+      {
+        filePath: "docs/guide.md",
+        line: 4,
+        prefix: "C:\\Users\\<user>\\",
+        reason: "Windows user home directory",
+        match: buildWindowsHomePath("Alice", "private-repo"),
+      },
+    ],
+  );
+});
+
+test("findForbiddenWorkstationLocalPaths checks boundaries per compound path segment", async (t) => {
+  const repoPath = await createTrackedRepo();
+  t.after(async () => {
+    await fs.rm(repoPath, { recursive: true, force: true });
+  });
+
+  await fs.mkdir(path.join(repoPath, "docs"), { recursive: true });
+  await fs.writeFile(
+    path.join(repoPath, "docs", "guide.md"),
+    [
+      `Mixed token: https://example.test${buildUnixHomePath("alice", "docs")}:${buildUnixHomePath("bob", "private-repo")}`,
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  git(repoPath, "add", "docs/guide.md");
+
+  const findings = await findForbiddenWorkstationLocalPaths(repoPath);
+
+  assert.deepEqual(
+    findings.map((finding) => ({
+      filePath: finding.filePath,
+      line: finding.line,
+      prefix: finding.prefix,
+      reason: finding.reason,
+      match: finding.match,
+    })),
+    [
+      {
+        filePath: "docs/guide.md",
+        line: 1,
+        prefix: "/home/<user>/",
+        reason: "Linux user home directory",
+        match: buildUnixHomePath("bob", "private-repo"),
+      },
+    ],
+  );
+});
+
+test("findForbiddenWorkstationLocalPaths still reports workstation homes inside colon-delimited Unix path lists", async (t) => {
+  const repoPath = await createTrackedRepo();
+  t.after(async () => {
+    await fs.rm(repoPath, { recursive: true, force: true });
+  });
+
+  await fs.mkdir(path.join(repoPath, "config"), { recursive: true });
+  await fs.writeFile(
+    path.join(repoPath, "config", "paths.env"),
+    [`N8N_DATA_PATHS=${buildUnixHomePath("node", ".n8n")}:${buildUnixHomePath("alice", "dev", "private-repo")}`, ""].join(
+      "\n",
+    ),
+    "utf8",
+  );
+  git(repoPath, "add", "config/paths.env");
+
+  const findings = await findForbiddenWorkstationLocalPaths(repoPath);
+
+  assert.deepEqual(
+    findings.map((finding) => ({
+      filePath: finding.filePath,
+      line: finding.line,
+      prefix: finding.prefix,
+      reason: finding.reason,
+      match: finding.match,
+    })),
+    [
+      {
+        filePath: "config/paths.env",
+        line: 1,
+        prefix: "/home/<user>/",
+        reason: "Linux user home directory",
+        match: buildUnixHomePath("alice", "dev", "private-repo"),
+      },
+    ],
+  );
+});
+
+test("findForbiddenWorkstationLocalPaths classifies mixed-prefix path lists without duplicate findings", async (t) => {
+  const repoPath = await createTrackedRepo();
+  t.after(async () => {
+    await fs.rm(repoPath, { recursive: true, force: true });
+  });
+
+  await fs.mkdir(path.join(repoPath, "config"), { recursive: true });
+  await fs.writeFile(
+    path.join(repoPath, "config", "paths.env"),
+    [`DEV_PATHS=${buildUnixHomePath("node", ".n8n")}:${buildMacHomePath("alice", "Dev", "private-repo")}`, ""].join("\n"),
+    "utf8",
+  );
+  git(repoPath, "add", "config/paths.env");
+
+  const findings = await findForbiddenWorkstationLocalPaths(repoPath);
+
+  assert.deepEqual(
+    findings.map((finding) => ({
+      filePath: finding.filePath,
+      line: finding.line,
+      prefix: finding.prefix,
+      reason: finding.reason,
+      match: finding.match,
+    })),
+    [
+      {
+        filePath: "config/paths.env",
+        line: 1,
+        prefix: "/Users/<user>/",
+        reason: "macOS user home directory",
+        match: buildMacHomePath("alice", "Dev", "private-repo"),
+      },
+    ],
+  );
+});
+
+test("findForbiddenWorkstationLocalPaths honors configured same-line publishable allowlist markers only when opted in", async (t) => {
+  const repoPath = await createTrackedRepo();
+  t.after(async () => {
+    await fs.rm(repoPath, { recursive: true, force: true });
+  });
+
+  await fs.mkdir(path.join(repoPath, "tests"), { recursive: true });
+  await fs.writeFile(
+    path.join(repoPath, "tests", "fixtures.py"),
+    [
+      `ALLOWED = "${buildMacHomePath("alice", "Dev", "fixture")}"  # publishable-path-hygiene: allowlist`,
+      "# publishable-path-hygiene: allowlist",
+      `STILL_BLOCKED = "${buildMacHomePath("alice", "Dev", "real-leak")}"`,
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  git(repoPath, "add", "tests/fixtures.py");
+
+  const withoutOptIn = await findForbiddenWorkstationLocalPaths(repoPath);
+  assert.deepEqual(
+    withoutOptIn.map((finding) => ({ filePath: finding.filePath, line: finding.line, match: finding.match })),
+    [
+      {
+        filePath: "tests/fixtures.py",
+        line: 1,
+        match: buildMacHomePath("alice", "Dev", "fixture"),
+      },
+      {
+        filePath: "tests/fixtures.py",
+        line: 3,
+        match: buildMacHomePath("alice", "Dev", "real-leak"),
+      },
+    ],
+  );
+
+  const withOptIn = await findForbiddenWorkstationLocalPaths(repoPath, undefined, {
+    publishablePathAllowlistMarkers: ["publishable-path-hygiene: allowlist"],
+  });
+  assert.deepEqual(
+    withOptIn.map((finding) => ({ filePath: finding.filePath, line: finding.line, match: finding.match })),
+    [
+      {
+        filePath: "tests/fixtures.py",
+        line: 3,
+        match: buildMacHomePath("alice", "Dev", "real-leak"),
+      },
+    ],
+  );
+});
+
+test("findForbiddenWorkstationLocalPaths limits same-line publishable allowlist markers to ordinary tracked content", async (t) => {
+  const repoPath = await createTrackedRepo();
+  const currentJournalPath = path.join(repoPath, ".codex-supervisor", "issues", "102", "issue-journal.md");
+  const otherJournalPath = path.join(repoPath, ".codex-supervisor", "issues", "181", "issue-journal.md");
+  const trustedArtifactPath = path.join(repoPath, "docs", "generated-summary.md");
+  t.after(async () => {
+    await fs.rm(repoPath, { recursive: true, force: true });
+  });
+
+  await fs.mkdir(path.dirname(currentJournalPath), { recursive: true });
+  await fs.mkdir(path.dirname(otherJournalPath), { recursive: true });
+  await fs.mkdir(path.dirname(trustedArtifactPath), { recursive: true });
+  await fs.mkdir(path.join(repoPath, "tests"), { recursive: true });
+  await fs.writeFile(currentJournalPath, "# Issue #102\n", "utf8");
+  await fs.writeFile(
+    otherJournalPath,
+    [
+      "# Issue #181",
+      "",
+      "## Codex Working Notes",
+      "### Current Handoff",
+      `- What changed: copied ${buildMacHomePath("alice", "Dev", "fixture")} # publishable-path-hygiene: allowlist`,
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  await fs.writeFile(
+    path.join(repoPath, "WORKLOG.md"),
+    `Operator note: ${buildUnixHomePath("alice", "dev", "fixture")} # publishable-path-hygiene: allowlist\n`,
+    "utf8",
+  );
+  await fs.writeFile(
+    trustedArtifactPath,
+    [
+      TRUSTED_GENERATED_DURABLE_ARTIFACT_MARKDOWN_MARKER,
+      "",
+      `Generated note: ${buildUnixHomePath("alice", "dev", "fixture")} # publishable-path-hygiene: allowlist`,
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  await fs.writeFile(
+    path.join(repoPath, "tests", "fixtures.py"),
+    [
+      `ALLOWED = "${buildMacHomePath("alice", "Dev", "fixture")}"  # publishable-path-hygiene: allowlist`,
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  git(
+    repoPath,
+    "add",
+    ".codex-supervisor/issues/102/issue-journal.md",
+    ".codex-supervisor/issues/181/issue-journal.md",
+    "WORKLOG.md",
+    "docs/generated-summary.md",
+    "tests/fixtures.py",
+  );
+
+  const findings = await findForbiddenWorkstationLocalPaths(repoPath, undefined, {
+    publishablePathAllowlistMarkers: ["publishable-path-hygiene: allowlist"],
+  });
+
+  assert.deepEqual(
+    findings.map((finding) => ({ filePath: finding.filePath, line: finding.line, match: finding.match })),
+    [
+      {
+        filePath: ".codex-supervisor/issues/181/issue-journal.md",
+        line: 5,
+        match: buildMacHomePath("alice", "Dev", "fixture"),
+      },
+      {
+        filePath: "WORKLOG.md",
+        line: 1,
+        match: buildUnixHomePath("alice", "dev", "fixture"),
+      },
+      {
+        filePath: "docs/generated-summary.md",
+        line: 3,
+        match: buildUnixHomePath("alice", "dev", "fixture"),
+      },
+    ],
+  );
+});
+
+test("findForbiddenWorkstationLocalPaths skips tracked files omitted by sparse checkout", async (t) => {
+  const repoPath = await createTrackedRepo();
+  t.after(async () => {
+    await fs.rm(repoPath, { recursive: true, force: true });
+  });
+
+  const currentJournalPath = path.join(repoPath, ".codex-supervisor", "issues", "102", "issue-journal.md");
+  const otherJournalPath = path.join(repoPath, ".codex-supervisor", "issues", "181", "issue-journal.md");
+  const hiddenArtifactPath = path.join(repoPath, ".codex-supervisor", "pre-merge", "assessment-snapshot.json");
+  const visibleDocPath = path.join(repoPath, "docs", "guide.md");
+  await fs.mkdir(path.dirname(currentJournalPath), { recursive: true });
+  await fs.mkdir(path.dirname(otherJournalPath), { recursive: true });
+  await fs.mkdir(path.dirname(hiddenArtifactPath), { recursive: true });
+  await fs.mkdir(path.dirname(visibleDocPath), { recursive: true });
+  await fs.writeFile(currentJournalPath, "# Issue #102\n", "utf8");
+  await fs.writeFile(otherJournalPath, `- What changed: ${buildMacHomePath("alice", "Dev", "private-repo")}\n`, "utf8");
+  await fs.writeFile(hiddenArtifactPath, JSON.stringify({ kind: "pre-merge", ok: false }, null, 2).concat("\n"), "utf8");
+  await fs.writeFile(visibleDocPath, `Visible leak: ${buildUnixHomePath("alice", "dev", "private-repo")}\n`, "utf8");
+  git(
+    repoPath,
+    "add",
+    ".codex-supervisor/issues/102/issue-journal.md",
+    ".codex-supervisor/issues/181/issue-journal.md",
+    ".codex-supervisor/pre-merge/assessment-snapshot.json",
+    "docs/guide.md",
+  );
+  git(repoPath, "commit", "-m", "seed sparse checkout fixture");
+
+  git(repoPath, "sparse-checkout", "init", "--no-cone");
+  await fs.writeFile(
+    path.join(repoPath, ".git", "info", "sparse-checkout"),
+    ["/README.md", "/docs/", "/.codex-supervisor/issues/102/"].join("\n").concat("\n"),
+    "utf8",
+  );
+  git(repoPath, "read-tree", "-mu", "HEAD");
+
+  await assert.rejects(fs.access(otherJournalPath), { code: "ENOENT" });
+  await assert.rejects(fs.access(hiddenArtifactPath), { code: "ENOENT" });
+
+  const findings = await findForbiddenWorkstationLocalPaths(repoPath);
+
+  assert.deepEqual(
+    findings.map((finding) => ({
+      filePath: finding.filePath,
+      line: finding.line,
+      prefix: finding.prefix,
+      reason: finding.reason,
+      match: finding.match,
+    })),
+    [
+      {
+        filePath: "docs/guide.md",
+        line: 1,
+        prefix: "/home/<user>/",
+        reason: "Linux user home directory",
+        match: buildUnixHomePath("alice", "dev", "private-repo"),
+      },
+    ],
+  );
+});
+
+test("findForbiddenWorkstationLocalPaths skips gitlink entries whose worktree path is a directory", async (t) => {
+  const repoPath = await createTrackedRepo();
+  t.after(async () => {
+    await fs.rm(repoPath, { recursive: true, force: true });
+  });
+
+  const docsPath = path.join(repoPath, "docs", "guide.md");
+  const gitlinkPath = ".oh-my-opencode";
+  await fs.mkdir(path.dirname(docsPath), { recursive: true });
+  await fs.writeFile(docsPath, `Visible leak: ${buildUnixHomePath("alice", "dev", "private-repo")}\n`, "utf8");
+  git(repoPath, "add", "docs/guide.md");
+  git(repoPath, "update-index", "--add", "--cacheinfo", `160000,${git(repoPath, "rev-parse", "HEAD").trim()},${gitlinkPath}`);
+  await fs.mkdir(path.join(repoPath, gitlinkPath), { recursive: true });
+
+  assert.match(git(repoPath, "ls-files", "-s", gitlinkPath).trimEnd(), /^160000 [0-9a-f]{40} 0\t\.oh-my-opencode$/u);
+
+  const findings = await findForbiddenWorkstationLocalPaths(repoPath);
+
+  assert.deepEqual(
+    findings.map((finding) => ({
+      filePath: finding.filePath,
+      line: finding.line,
+      prefix: finding.prefix,
+      reason: finding.reason,
+      match: finding.match,
+    })),
+    [
+      {
+        filePath: "docs/guide.md",
+        line: 1,
+        prefix: "/home/<user>/",
+        reason: "Linux user home directory",
+        match: buildUnixHomePath("alice", "dev", "private-repo"),
+      },
+    ],
+  );
+});
+
+test("findForbiddenWorkstationLocalPaths flags tracked supervisor-generated artifacts by path", async (t) => {
+  const repoPath = await createTrackedRepo();
+  t.after(async () => {
+    await fs.rm(repoPath, { recursive: true, force: true });
+  });
+
+  const artifactPath = path.join(repoPath, ".codex-supervisor", "pre-merge", "assessment-snapshot.json");
+  await fs.mkdir(path.dirname(artifactPath), { recursive: true });
+  await fs.writeFile(artifactPath, JSON.stringify({ kind: "pre-merge", ok: false }, null, 2).concat("\n"), "utf8");
+  git(repoPath, "add", ".codex-supervisor/pre-merge/assessment-snapshot.json");
+
+  const findings = await findForbiddenWorkstationLocalPaths(repoPath);
+
+  assert.deepEqual(findings, [
+    {
+      filePath: ".codex-supervisor/pre-merge/assessment-snapshot.json",
+      line: null,
+      remediation:
+        "remove the tracked file or rewrite the fixture outside live supervisor paths (for example: git rm --cached .codex-supervisor/pre-merge/assessment-snapshot.json)",
+      match: ".codex-supervisor/pre-merge/assessment-snapshot.json",
+      prefix: ".codex-supervisor/pre-merge/",
+      reason: "is a supervisor-generated pre-merge artifact that must stay machine-local",
+    },
+  ]);
+});

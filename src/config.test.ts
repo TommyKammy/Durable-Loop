@@ -1,0 +1,3432 @@
+import { execFileSync } from "node:child_process";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  CONFIG_FIELD_POSTURE_TIERS,
+  getConfigFieldPostureMetadata,
+  findRepoOwnedWorkspacePreparationCandidate,
+  loadConfig,
+  loadConfigSummary,
+  loadConfigSummaryFromDocument,
+  resolveConfigPath,
+  summarizeCadenceDiagnostics,
+  summarizeLocalCiContract,
+} from "./core/config";
+import type { LocalCiContractSummary, SupervisorConfig } from "./core/config-types";
+import type { GitHubIssue } from "./core/types";
+import { lintExecutionReadyIssueBody, validateIssueMetadataSyntax } from "./issue-metadata";
+import { buildSetupConfigPreview } from "./setup-config-preview";
+import { updateSetupConfig } from "./setup-config-write";
+
+function initGitRepo(repoPath: string): void {
+  execFileSync("git", ["init"], { cwd: repoPath, stdio: "ignore" });
+  execFileSync("git", ["config", "user.name", "Codex Test"], { cwd: repoPath, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "codex@example.com"], { cwd: repoPath, stdio: "ignore" });
+}
+
+function commitAll(repoPath: string, message: string): void {
+  execFileSync("git", ["add", "."], { cwd: repoPath, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", message], { cwd: repoPath, stdio: "ignore" });
+}
+
+async function readShippedProfileJson(rootDir: string, relativePath: string): Promise<Record<string, unknown>> {
+  const indexPath = relativePath.split(path.sep).join("/");
+  let content: string;
+  try {
+    content = execFileSync("git", ["show", `:${indexPath}`], {
+      cwd: rootDir,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    content = await fs.readFile(path.join(rootDir, relativePath), "utf8");
+  }
+  return JSON.parse(content) as Record<string, unknown>;
+}
+
+function assertCodeRabbitStarterRepoSlugPlaceholder(raw: { repoSlug?: unknown }): void {
+  const repoSlug = raw.repoSlug;
+
+  if (typeof repoSlug !== "string") {
+    assert.fail("supervisor.config.coderabbit.json should define repoSlug as a string");
+  }
+  assert.notEqual(repoSlug, "TommyKammy/codex-supervisor");
+  assert.match(
+    repoSlug,
+    /^[^/]+$/u,
+    "supervisor.config.coderabbit.json should force operators to replace repoSlug before loadConfig accepts it",
+  );
+}
+
+test("config field posture metadata classifies setup and automation-expanding fields by typed tiers", () => {
+  assert.deepEqual(CONFIG_FIELD_POSTURE_TIERS, [
+    "required",
+    "recommended",
+    "advanced",
+    "dangerous_explicit_opt_in",
+  ]);
+
+  assert.deepEqual(
+    [
+      "repoPath",
+      "repoSlug",
+      "defaultBranch",
+      "workspaceRoot",
+      "stateFile",
+      "codexBinary",
+      "branchPrefix",
+      "trustMode",
+      "executionSafetyMode",
+      "reviewBotLogins",
+    ].map((field) => [field, getConfigFieldPostureMetadata(field)?.tier]),
+    [
+      ["repoPath", "required"],
+      ["repoSlug", "required"],
+      ["defaultBranch", "required"],
+      ["workspaceRoot", "required"],
+      ["stateFile", "required"],
+      ["codexBinary", "required"],
+      ["branchPrefix", "required"],
+      ["trustMode", "required"],
+      ["executionSafetyMode", "required"],
+      ["reviewBotLogins", "required"],
+    ],
+  );
+
+  assert.deepEqual(
+    [
+      "repoPath",
+      "trustMode",
+      "executionSafetyMode",
+      "reviewBotLogins",
+    ].map((field) => [field, getConfigFieldPostureMetadata(field)?.requirementScope]),
+    [
+      ["repoPath", "parser_required"],
+      ["trustMode", "first_run_setup"],
+      ["executionSafetyMode", "first_run_setup"],
+      ["reviewBotLogins", "first_run_setup"],
+    ],
+  );
+
+  assert.deepEqual(
+    [
+      "codexModelStrategy",
+      "workspacePreparationCommand",
+      "localCiCommand",
+      "localReviewPolicy",
+      "trackedPrCurrentHeadLocalReviewRequired",
+    ].map((field) => [field, getConfigFieldPostureMetadata(field)?.tier]),
+    [
+      ["codexModelStrategy", "recommended"],
+      ["workspacePreparationCommand", "recommended"],
+      ["localCiCommand", "recommended"],
+      ["localReviewPolicy", "recommended"],
+      ["trackedPrCurrentHeadLocalReviewRequired", "recommended"],
+    ],
+  );
+
+  assert.deepEqual(
+    [
+      "stateBackend",
+      "issueJournalRelativePath",
+      "candidateDiscoveryFetchWindow",
+      "configuredBotCurrentHeadSignalTimeoutMinutes",
+    ].map((field) => [field, getConfigFieldPostureMetadata(field)?.tier]),
+    [
+      ["stateBackend", "advanced"],
+      ["issueJournalRelativePath", "advanced"],
+      ["candidateDiscoveryFetchWindow", "advanced"],
+      ["configuredBotCurrentHeadSignalTimeoutMinutes", "advanced"],
+    ],
+  );
+
+  assert.deepEqual(
+    [
+      "localReviewFollowUpRepairEnabled",
+      "localReviewManualReviewRepairEnabled",
+      "localReviewFollowUpIssueCreationEnabled",
+      "localReviewHighSeverityAction",
+      "staleConfiguredBotReviewPolicy",
+      "verifiedNoSourceChangeReviewThreadAutoResolve",
+      "verifiedCurrentHeadRepairReviewThreadAutoResolve",
+      "codexConnectorAutoMergeEnabled",
+      "approvedTrackedTopLevelEntries",
+    ].map((field) => [field, getConfigFieldPostureMetadata(field)?.tier]),
+    [
+      ["localReviewFollowUpRepairEnabled", "dangerous_explicit_opt_in"],
+      ["localReviewManualReviewRepairEnabled", "dangerous_explicit_opt_in"],
+      ["localReviewFollowUpIssueCreationEnabled", "dangerous_explicit_opt_in"],
+      ["localReviewHighSeverityAction", "dangerous_explicit_opt_in"],
+      ["staleConfiguredBotReviewPolicy", "dangerous_explicit_opt_in"],
+      ["verifiedNoSourceChangeReviewThreadAutoResolve", "dangerous_explicit_opt_in"],
+      ["verifiedCurrentHeadRepairReviewThreadAutoResolve", "dangerous_explicit_opt_in"],
+      ["codexConnectorAutoMergeEnabled", "dangerous_explicit_opt_in"],
+      ["approvedTrackedTopLevelEntries", "dangerous_explicit_opt_in"],
+    ],
+  );
+});
+
+test("config-owned local CI summary type covers diagnostics behavior", () => {
+  const summary = summarizeLocalCiContract({
+    localCiCommand: {
+      mode: "structured",
+      executable: "npm",
+      args: ["run", "build"],
+    },
+    localCiCandidateDismissed: false,
+  }) satisfies LocalCiContractSummary;
+
+  assert.equal(summary.configured, true);
+  assert.equal(summary.command, "npm run build");
+  assert.equal(summary.source, "config");
+  assert.equal(summary.adoptionFlow?.state, "configured");
+});
+
+test("loadConfig leaves bare codexBinary values unresolved for PATH lookup", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+
+  assert.equal(config.codexBinary, "codex");
+  assert.equal(config.repoPath, tempDir);
+  assert.equal(config.workspaceRoot, path.join(tempDir, "workspaces"));
+  assert.equal(config.stateFile, path.join(tempDir, "state.json"));
+});
+
+test("loadConfigSummary reports missing required fields without throwing", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      defaultBranch: "main",
+    }),
+    "utf8",
+  );
+
+  const summary = loadConfigSummary(configPath);
+
+  assert.equal(summary.status, "invalid_config");
+  assert.deepEqual(summary.missingRequiredFields, [
+    "repoSlug",
+    "workspaceRoot",
+    "stateFile",
+    "codexBinary",
+    "branchPrefix",
+  ]);
+  assert.equal(summary.config, null);
+  assert.match(summary.error ?? "", /Missing or invalid config field: repoSlug/);
+});
+
+test("loadConfigSummaryFromDocument resolves config-relative paths for in-memory previews", () => {
+  const configPath = path.join(process.cwd(), "fixtures", "supervisor.config.json");
+
+  const summary = loadConfigSummaryFromDocument(
+    {
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "./bin/codex",
+      branchPrefix: "codex/issue-",
+    },
+    configPath,
+  );
+
+  assert.equal(summary.status, "ready");
+  assert.equal(summary.configPath, configPath);
+  assert.equal(summary.config?.repoPath, path.join(path.dirname(configPath)));
+  assert.equal(summary.config?.workspaceRoot, path.join(path.dirname(configPath), "workspaces"));
+  assert.equal(summary.config?.stateFile, path.join(path.dirname(configPath), "state.json"));
+  assert.equal(summary.config?.codexBinary, path.join(path.dirname(configPath), "bin", "codex"));
+  assert.deepEqual(summary.missingRequiredFields, []);
+  assert.deepEqual(summary.invalidFields, []);
+});
+
+test("resolveConfigPath honors CODEX_SUPERVISOR_CONFIG by default while keeping explicit config precedence", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  const originalEnv = process.env.CODEX_SUPERVISOR_CONFIG;
+  t.after(async () => {
+    if (originalEnv === undefined) {
+      delete process.env.CODEX_SUPERVISOR_CONFIG;
+    } else {
+      process.env.CODEX_SUPERVISOR_CONFIG = originalEnv;
+    }
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const envConfigPath = path.join(tempDir, "supervisor.config.coderabbit.json");
+  const explicitConfigPath = path.join(tempDir, "supervisor.config.explicit.json");
+  process.env.CODEX_SUPERVISOR_CONFIG = envConfigPath;
+
+  assert.equal(resolveConfigPath(), envConfigPath);
+  assert.equal(resolveConfigPath(explicitConfigPath), explicitConfigPath);
+});
+
+test("loadConfigSummary surfaces the default trust diagnostics posture", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+    }),
+    "utf8",
+  );
+
+  const summary = loadConfigSummary(configPath);
+
+  assert.deepEqual(summary.trustDiagnostics, {
+    trustMode: "trusted_repo_and_authors",
+    executionSafetyMode: "unsandboxed_autonomous",
+    warning:
+      "Unsandboxed autonomous execution assumes trusted GitHub-authored inputs; confirm this explicit setup trust posture before starting autonomous execution.",
+    configWarning: null,
+  });
+});
+
+test("loadConfig keeps local review disabled by default while using the opinionated enabled posture", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+
+  assert.equal(config.localReviewPosture, "off");
+  assert.equal(config.localReviewEnabled, false);
+  assert.equal(config.localReviewAutoDetect, true);
+  assert.deepEqual(config.localReviewRoles, []);
+  assert.equal(config.localReviewPolicy, "block_merge");
+  assert.equal(config.trackedPrCurrentHeadLocalReviewRequired, false);
+  assert.equal(config.localReviewFollowUpRepairEnabled, false);
+  assert.equal(config.localReviewManualReviewRepairEnabled, false);
+  assert.equal(config.localReviewFollowUpIssueCreationEnabled, false);
+  assert.equal(config.localReviewHighSeverityAction, "blocked");
+  assert.equal(config.staleConfiguredBotReviewPolicy, "diagnose_only");
+  assert.equal(config.verifiedNoSourceChangeReviewThreadAutoResolve, false);
+  assert.equal(config.verifiedCurrentHeadRepairReviewThreadAutoResolve, false);
+  assert.equal(config.codexConnectorReviewChurnMustFixThreshold, 8);
+  assert.equal(config.codexConnectorReviewChurnFileConcentrationPercent, 70);
+  assert.equal(config.codexConnectorAutoMergeEnabled, false);
+});
+
+test("loadConfig keeps release readiness advisory by default", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+
+  assert.equal(config.releaseReadinessGate, "advisory");
+});
+
+test("loadConfig accepts explicit release readiness release-publication gate opt-in", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      releaseReadinessGate: "block_release_publication",
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+
+  assert.equal(config.releaseReadinessGate, "block_release_publication");
+});
+
+test("loadConfig rejects unsupported release readiness gate postures", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      releaseReadinessGate: "block_everything",
+    }),
+    "utf8",
+  );
+
+  const summary = loadConfigSummary(configPath);
+
+  assert.equal(summary.status, "invalid_config");
+  assert.deepEqual(summary.invalidFields, ["releaseReadinessGate"]);
+  assert.match(summary.error ?? "", /Invalid config field: releaseReadinessGate/);
+});
+
+test("loadConfig maps named local review posture presets onto existing low-level fields", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const baseDocument = {
+    repoPath: ".",
+    repoSlug: "owner/repo",
+    defaultBranch: "main",
+    workspaceRoot: "./workspaces",
+    stateFile: "./state.json",
+    codexBinary: "codex",
+    branchPrefix: "codex/issue-",
+  };
+  const cases = [
+    {
+      preset: "off",
+      expected: {
+        localReviewEnabled: false,
+        localReviewPolicy: "block_merge",
+        localReviewFollowUpRepairEnabled: false,
+        localReviewManualReviewRepairEnabled: false,
+        localReviewFollowUpIssueCreationEnabled: false,
+        localReviewHighSeverityAction: "blocked",
+      },
+    },
+    {
+      preset: "advisory",
+      expected: {
+        localReviewEnabled: true,
+        localReviewPolicy: "advisory",
+        localReviewFollowUpRepairEnabled: false,
+        localReviewManualReviewRepairEnabled: false,
+        localReviewFollowUpIssueCreationEnabled: false,
+        localReviewHighSeverityAction: "blocked",
+      },
+    },
+    {
+      preset: "block_merge",
+      expected: {
+        localReviewEnabled: true,
+        localReviewPolicy: "block_merge",
+        localReviewFollowUpRepairEnabled: false,
+        localReviewManualReviewRepairEnabled: false,
+        localReviewFollowUpIssueCreationEnabled: false,
+        localReviewHighSeverityAction: "blocked",
+      },
+    },
+    {
+      preset: "repair_high_severity",
+      expected: {
+        localReviewEnabled: true,
+        localReviewPolicy: "block_merge",
+        localReviewFollowUpRepairEnabled: false,
+        localReviewManualReviewRepairEnabled: false,
+        localReviewFollowUpIssueCreationEnabled: false,
+        localReviewHighSeverityAction: "retry",
+      },
+    },
+    {
+      preset: "follow_up_issue_creation",
+      expected: {
+        localReviewEnabled: true,
+        localReviewPolicy: "block_merge",
+        localReviewFollowUpRepairEnabled: false,
+        localReviewManualReviewRepairEnabled: false,
+        localReviewFollowUpIssueCreationEnabled: true,
+        localReviewHighSeverityAction: "blocked",
+      },
+    },
+  ] as const;
+
+  for (const { preset, expected } of cases) {
+    const configPath = path.join(tempDir, `${preset}.json`);
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({
+        ...baseDocument,
+        localReviewPosture: preset,
+        localReviewEnabled: preset === "off" ? true : false,
+        localReviewPolicy: "block_ready",
+        localReviewFollowUpRepairEnabled: true,
+        localReviewManualReviewRepairEnabled: true,
+        localReviewFollowUpIssueCreationEnabled: false,
+        localReviewHighSeverityAction: "retry",
+      }),
+      "utf8",
+    );
+
+    const config = loadConfig(configPath);
+    assert.equal(config.localReviewPosture, preset);
+    assert.deepEqual(
+      {
+        localReviewEnabled: config.localReviewEnabled,
+        localReviewPolicy: config.localReviewPolicy,
+        localReviewFollowUpRepairEnabled: config.localReviewFollowUpRepairEnabled,
+        localReviewManualReviewRepairEnabled: config.localReviewManualReviewRepairEnabled,
+        localReviewFollowUpIssueCreationEnabled: config.localReviewFollowUpIssueCreationEnabled,
+        localReviewHighSeverityAction: config.localReviewHighSeverityAction,
+      },
+      expected,
+    );
+  }
+});
+
+test("loadConfig rejects unsupported local review posture presets", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      localReviewPosture: "auto_repair_everything",
+    }),
+    "utf8",
+  );
+
+  const summary = loadConfigSummary(configPath);
+  assert.equal(summary.status, "invalid_config");
+  assert.deepEqual(summary.invalidFields, ["localReviewPosture"]);
+  assert.match(summary.error ?? "", /Invalid config field: localReviewPosture/);
+});
+
+test("loadConfig accepts explicit local review same-PR follow-up repair opt-in", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      localReviewFollowUpRepairEnabled: true,
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+  assert.equal(config.localReviewFollowUpRepairEnabled, true);
+});
+
+test("loadConfig accepts explicit local review same-PR manual-review repair opt-in", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      localReviewManualReviewRepairEnabled: true,
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+  assert.equal(config.localReviewManualReviewRepairEnabled, true);
+});
+
+test("loadConfig accepts explicit publishable path allowlist markers", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      publishablePathAllowlistMarkers: ["publishable-path-hygiene: allowlist"],
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+  assert.deepEqual(config.publishablePathAllowlistMarkers, ["publishable-path-hygiene: allowlist"]);
+});
+
+test("loadConfig rejects empty publishable path allowlist markers", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      publishablePathAllowlistMarkers: ["", "   ", "publishable-path-hygiene: allowlist"],
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+  assert.deepEqual(config.publishablePathAllowlistMarkers, ["publishable-path-hygiene: allowlist"]);
+});
+
+test("loadConfig accepts explicit approved tracked top-level entries", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      approvedTrackedTopLevelEntries: ["README.md", "src", ".github"],
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+  assert.deepEqual(config.approvedTrackedTopLevelEntries, ["README.md", "src", ".github"]);
+});
+
+test("loadConfig rejects nested approved tracked top-level entries", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      approvedTrackedTopLevelEntries: ["README.md", "docs/guide.md"],
+    }),
+    "utf8",
+  );
+
+  const summary = loadConfigSummary(configPath);
+  assert.equal(summary.status, "invalid_config");
+  assert.deepEqual(summary.invalidFields, ["approvedTrackedTopLevelEntries"]);
+  assert.match(summary.error ?? "", /approvedTrackedTopLevelEntries\[1\]/);
+});
+
+test("loadConfig accepts explicit local review follow-up issue creation opt-in", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      localReviewFollowUpIssueCreationEnabled: true,
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+  assert.equal(config.localReviewFollowUpIssueCreationEnabled, true);
+});
+
+test("loadConfig rejects enabling same-PR follow-up repair together with follow-up issue creation", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      localReviewFollowUpRepairEnabled: true,
+      localReviewFollowUpIssueCreationEnabled: true,
+    }),
+    "utf8",
+  );
+
+  const summary = loadConfigSummary(configPath);
+  assert.equal(summary.status, "invalid_config");
+  assert.deepEqual(summary.invalidFields, ["localReviewFollowUpRepairEnabled"]);
+  assert.match(
+    summary.error ?? "",
+    /Invalid config field: localReviewFollowUpRepairEnabled \(cannot enable same-PR local-review follow-up repair together with localReviewFollowUpIssueCreationEnabled\)/,
+  );
+
+  assert.throws(
+    () => loadConfig(configPath),
+    /Invalid config field: localReviewFollowUpRepairEnabled \(cannot enable same-PR local-review follow-up repair together with localReviewFollowUpIssueCreationEnabled\)/,
+  );
+});
+
+test("loadConfigSummary accepts an explicit safer trust diagnostics posture without warning", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      trustMode: "untrusted_or_mixed",
+      executionSafetyMode: "operator_gated",
+    }),
+    "utf8",
+  );
+
+  const summary = loadConfigSummary(configPath);
+
+  assert.deepEqual(summary.trustDiagnostics, {
+    trustMode: "untrusted_or_mixed",
+    executionSafetyMode: "operator_gated",
+    warning: null,
+    configWarning: null,
+  });
+});
+
+test("findRepoOwnedWorkspacePreparationCandidate ignores untracked lockfiles", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  initGitRepo(tempDir);
+  await fs.writeFile(path.join(tempDir, "README.md"), "# fixture\n", "utf8");
+  commitAll(tempDir, "seed");
+  await fs.writeFile(path.join(tempDir, "package-lock.json"), "{}\n", "utf8");
+
+  assert.equal(findRepoOwnedWorkspacePreparationCandidate(tempDir), null);
+});
+
+test("findRepoOwnedWorkspacePreparationCandidate recommends tracked lockfiles", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  initGitRepo(tempDir);
+  await fs.writeFile(path.join(tempDir, "README.md"), "# fixture\n", "utf8");
+  await fs.writeFile(path.join(tempDir, "package-lock.json"), "{}\n", "utf8");
+  commitAll(tempDir, "seed");
+
+  assert.equal(findRepoOwnedWorkspacePreparationCandidate(tempDir), "npm ci");
+});
+
+test("loadConfig rejects negative orphan cleanup grace values", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      cleanupOrphanedWorkspacesAfterHours: -1,
+    }),
+    "utf8",
+  );
+
+  const summary = loadConfigSummary(configPath);
+  assert.equal(summary.status, "invalid_config");
+  assert.deepEqual(summary.invalidFields, ["cleanupOrphanedWorkspacesAfterHours"]);
+  assert.match(summary.error ?? "", /Invalid config field: cleanupOrphanedWorkspacesAfterHours/);
+
+  assert.throws(() => loadConfig(configPath), /Invalid config field: cleanupOrphanedWorkspacesAfterHours/);
+});
+
+test("loadConfig still resolves codexBinary when it is an explicit relative path", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "./bin/codex",
+      branchPrefix: "codex/issue-",
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+
+  assert.equal(config.codexBinary, path.join(tempDir, "bin", "codex"));
+});
+
+test("loadConfig treats backslash-separated codexBinary values as explicit relative paths", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: ".\\bin\\codex",
+      branchPrefix: "codex/issue-",
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+
+  assert.equal(config.codexBinary, path.resolve(tempDir, ".\\bin\\codex"));
+});
+
+test("loadConfig defaults copilotReviewTimeoutAction to continue", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+
+  assert.equal(config.copilotReviewTimeoutAction, "continue");
+});
+
+test("loadConfig skips Epic titles by default during runnable selection", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+
+  assert.deepEqual(config.skipTitlePrefixes, ["Epic:"]);
+});
+
+test("loadConfig exposes the configured candidate discovery fetch window", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      candidateDiscoveryFetchWindow: 250,
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+
+  assert.equal(config.candidateDiscoveryFetchWindow, 250);
+});
+
+test("loadConfig exposes an optional repo-owned local CI command", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      localCiCommand: "npm run ci:local",
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+
+  assert.equal(config.localCiCommand, "npm run ci:local");
+});
+
+test("loadConfig accepts a structured repo-owned local CI command", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      localCiCommand: {
+        mode: "structured",
+        executable: "npm",
+        args: ["run", "ci:local"],
+      },
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+
+  assert.deepEqual(config.localCiCommand, {
+    mode: "structured",
+    executable: "npm",
+    args: ["run", "ci:local"],
+  });
+});
+
+test("loadConfig exposes an optional repo-owned workspace preparation command", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      workspacePreparationCommand: "npm ci",
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+
+  assert.equal(config.workspacePreparationCommand, "npm ci");
+});
+
+test("loadConfig falls back to the default candidate discovery fetch window for invalid values", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      candidateDiscoveryFetchWindow: 0,
+    }),
+    "utf8",
+  );
+
+  const summary = loadConfigSummary(configPath);
+  const config = loadConfig(configPath);
+
+  assert.equal(summary.status, "ready");
+  assert.equal(config.candidateDiscoveryFetchWindow, 100);
+});
+
+test("loadConfig maps reviewBotLogins into the internal configuredReviewProviders model", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      reviewBotLogins: ["CodeRabbitAI", "coderabbitai[bot]", "chatgpt-codex-connector", "chatgpt-codex-connector[bot]"],
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+
+  assert.deepEqual(config.reviewBotLogins, ["coderabbitai", "coderabbitai[bot]", "chatgpt-codex-connector"]);
+  assert.deepEqual(config.configuredReviewProviders, [
+    {
+      kind: "coderabbit",
+      reviewerLogins: ["coderabbitai", "coderabbitai[bot]"],
+      signalSource: "review_threads",
+    },
+    {
+      kind: "codex",
+      reviewerLogins: ["chatgpt-codex-connector"],
+      signalSource: "review_threads",
+    },
+  ]);
+});
+
+test("loadConfig accepts explicit copilotReviewTimeoutAction", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      copilotReviewTimeoutAction: "block",
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+
+  assert.equal(config.copilotReviewTimeoutAction, "block");
+});
+
+test("loadConfig rejects non-finite configuredBotRateLimitWaitMinutes by falling back to 0", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    `{
+      "repoPath": ".",
+      "repoSlug": "owner/repo",
+      "defaultBranch": "main",
+      "workspaceRoot": "./workspaces",
+      "stateFile": "./state.json",
+      "codexBinary": "codex",
+      "branchPrefix": "codex/issue-",
+      "configuredBotRateLimitWaitMinutes": 1e309
+    }`,
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+
+  assert.equal(config.configuredBotRateLimitWaitMinutes, 0);
+});
+
+test("loadConfig accepts an explicit configuredBotSettledWaitSeconds override", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      configuredBotSettledWaitSeconds: 3,
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath) as ReturnType<typeof loadConfig> & {
+    configuredBotSettledWaitSeconds?: number;
+  };
+
+  assert.equal(config.configuredBotSettledWaitSeconds, 3);
+});
+
+test("loadConfig accepts an explicit configuredBotInitialGraceWaitSeconds override", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      configuredBotInitialGraceWaitSeconds: 120,
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath) as SupervisorConfig & {
+    configuredBotInitialGraceWaitSeconds?: number;
+  };
+
+  assert.equal(config.configuredBotInitialGraceWaitSeconds, 120);
+});
+
+test("loadConfig accepts strict current-head configured-bot signal settings", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./.local/worktrees",
+      stateBackend: "json",
+      stateFile: "./.local/state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      configuredBotRequireCurrentHeadSignal: true,
+      configuredBotCurrentHeadSignalTimeoutMinutes: 12,
+      configuredBotCurrentHeadSignalTimeoutAction: "block",
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+  assert.equal(config.configuredBotRequireCurrentHeadSignal, true);
+  assert.equal(config.configuredBotCurrentHeadSignalTimeoutMinutes, 12);
+  assert.equal(config.configuredBotCurrentHeadSignalTimeoutAction, "block");
+});
+
+test("loadConfig accepts Codex Connector review request timeout action", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./.local/worktrees",
+      stateBackend: "json",
+      stateFile: "./.local/state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      reviewBotLogins: ["chatgpt-codex-connector"],
+      configuredBotCurrentHeadSignalTimeoutMinutes: 12,
+      configuredBotCurrentHeadSignalTimeoutAction: "request_review_comment",
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+  assert.equal(config.configuredBotCurrentHeadSignalTimeoutAction, "request_review_comment");
+});
+
+test("loadConfig accepts bounded Codex Connector review request retry settings", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./.local/worktrees",
+      stateBackend: "json",
+      stateFile: "./.local/state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      reviewBotLogins: ["chatgpt-codex-connector"],
+      configuredBotCurrentHeadSignalTimeoutAction: "request_review_comment",
+      codexConnectorReviewRequestNoResponseMinutes: 7,
+      codexConnectorReviewRequestRetryLimit: 2,
+      codexConnectorReviewRequestRetryMode: "supervisor_marker",
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+  assert.equal(config.codexConnectorReviewRequestNoResponseMinutes, 7);
+  assert.equal(config.codexConnectorReviewRequestRetryLimit, 2);
+  assert.equal(config.codexConnectorReviewRequestRetryMode, "supervisor_marker");
+});
+
+test("loadConfig accepts Codex Connector review churn thresholds", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./.local/worktrees",
+      stateBackend: "json",
+      stateFile: "./.local/state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      reviewBotLogins: ["chatgpt-codex-connector"],
+      codexConnectorReviewChurnMustFixThreshold: 6,
+      codexConnectorReviewChurnFileConcentrationPercent: 80,
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+  assert.equal(config.codexConnectorReviewChurnMustFixThreshold, 6);
+  assert.equal(config.codexConnectorReviewChurnFileConcentrationPercent, 80);
+});
+
+test("loadConfig accepts explicit stale configured-bot reply_only policy", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./.local/worktrees",
+      stateBackend: "json",
+      stateFile: "./.local/state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      staleConfiguredBotReviewPolicy: "reply_only",
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+  assert.equal(config.staleConfiguredBotReviewPolicy, "reply_only");
+});
+
+test("loadConfig accepts explicit stale configured-bot reply_and_resolve policy", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./.local/worktrees",
+      stateBackend: "json",
+      stateFile: "./.local/state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      staleConfiguredBotReviewPolicy: "reply_and_resolve",
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+  assert.equal(config.staleConfiguredBotReviewPolicy, "reply_and_resolve");
+});
+
+test("loadConfig rejects unsupported explicit stale configured-bot review policies", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./.local/worktrees",
+      stateBackend: "json",
+      stateFile: "./.local/state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      staleConfiguredBotReviewPolicy: "resolve_only",
+    }),
+    "utf8",
+  );
+
+  const summary = loadConfigSummary(configPath);
+  assert.equal(summary.status, "invalid_config");
+  assert.deepEqual(summary.invalidFields, ["staleConfiguredBotReviewPolicy"]);
+  assert.match(
+    summary.error ?? "",
+    /Invalid config field: staleConfiguredBotReviewPolicy \(unsupported value: resolve_only; supported values: diagnose_only, reply_only, reply_and_resolve\)/,
+  );
+
+  assert.throws(
+    () => loadConfig(configPath),
+    /Invalid config field: staleConfiguredBotReviewPolicy \(unsupported value: resolve_only; supported values: diagnose_only, reply_only, reply_and_resolve\)/,
+  );
+});
+
+test("loadConfig accepts an explicit mergeCriticalRecheckSeconds override", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      pollIntervalSeconds: 120,
+      mergeCriticalRecheckSeconds: 30,
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath) as SupervisorConfig & {
+    mergeCriticalRecheckSeconds?: number;
+  };
+  const summary = loadConfigSummary(configPath);
+
+  assert.equal(config.mergeCriticalRecheckSeconds, 30);
+  assert.equal(summary.config?.mergeCriticalRecheckSeconds, 30);
+});
+
+test("loadConfig disables mergeCriticalRecheckSeconds for invalid values and preserves poll cadence fallback", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      pollIntervalSeconds: 120,
+      mergeCriticalRecheckSeconds: -5,
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath) as SupervisorConfig & {
+    mergeCriticalRecheckSeconds?: number;
+  };
+  const summary = loadConfigSummary(configPath);
+
+  assert.equal(config.pollIntervalSeconds, 120);
+  assert.equal(config.mergeCriticalRecheckSeconds, undefined);
+  assert.equal(summary.config?.mergeCriticalRecheckSeconds, undefined);
+});
+
+test("summarizeCadenceDiagnostics disables invalid programmatic mergeCriticalRecheckSeconds values", () => {
+  assert.deepEqual(
+    summarizeCadenceDiagnostics({
+      pollIntervalSeconds: 120,
+      mergeCriticalRecheckSeconds: Number.POSITIVE_INFINITY,
+    }),
+    {
+      pollIntervalSeconds: 120,
+      mergeCriticalRecheckSeconds: null,
+      mergeCriticalEffectiveSeconds: 120,
+      mergeCriticalRecheckEnabled: false,
+    },
+  );
+
+  assert.deepEqual(
+    summarizeCadenceDiagnostics({
+      pollIntervalSeconds: 120,
+      mergeCriticalRecheckSeconds: 1.5,
+    }),
+    {
+      pollIntervalSeconds: 120,
+      mergeCriticalRecheckSeconds: null,
+      mergeCriticalEffectiveSeconds: 120,
+      mergeCriticalRecheckEnabled: false,
+    },
+  );
+});
+
+test("loadConfig defaults localReviewHighSeverityAction to blocked", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+
+  assert.equal(config.localReviewHighSeverityAction, "blocked");
+});
+
+test("loadConfig defaults reviewer-type local review thresholds from the global confidence threshold", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      localReviewConfidenceThreshold: 0.72,
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+
+  assert.deepEqual(config.localReviewReviewerThresholds, {
+    generic: {
+      confidenceThreshold: 0.72,
+      minimumSeverity: "low",
+    },
+    specialist: {
+      confidenceThreshold: 0.72,
+      minimumSeverity: "low",
+    },
+  });
+});
+
+test("loadConfig accepts reviewer-type local review thresholds", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      localReviewConfidenceThreshold: 0.7,
+      localReviewReviewerThresholds: {
+        generic: {
+          confidenceThreshold: 0.9,
+          minimumSeverity: "high",
+        },
+        specialist: {
+          confidenceThreshold: 0.8,
+          minimumSeverity: "medium",
+        },
+      },
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+
+  assert.deepEqual(config.localReviewReviewerThresholds, {
+    generic: {
+      confidenceThreshold: 0.9,
+      minimumSeverity: "high",
+    },
+    specialist: {
+      confidenceThreshold: 0.8,
+      minimumSeverity: "medium",
+    },
+  });
+});
+
+test("shipped example configs recommend block_merge for local review gating", async () => {
+  const rootDir = path.resolve(__dirname, "..");
+  const examplePaths = [
+    path.join(rootDir, "supervisor.config.example.json"),
+    path.join(rootDir, "supervisor.config.copilot.json"),
+    path.join(rootDir, "supervisor.config.codex.json"),
+    path.join(rootDir, "supervisor.config.coderabbit.json"),
+    path.join(rootDir, "supervisor.config.typescript-node.json"),
+    path.join(rootDir, "supervisor.config.nextjs.json"),
+    path.join(rootDir, "supervisor.config.python-cli.json"),
+    path.join(rootDir, "docs", "examples", "atlaspm.supervisor.config.example.json"),
+  ];
+
+  for (const examplePath of examplePaths) {
+    const raw = JSON.parse(await fs.readFile(examplePath, "utf8")) as { localReviewPolicy?: unknown };
+    assert.equal(raw.localReviewPolicy, "block_merge", `${path.relative(rootDir, examplePath)} should recommend block_merge`);
+  }
+});
+
+test("shipped starter config profiles keep local review disabled until operators opt in", async () => {
+  const rootDir = path.resolve(__dirname, "..");
+  const examplePaths = [
+    path.join(rootDir, "supervisor.config.example.json"),
+    path.join(rootDir, "supervisor.config.copilot.json"),
+    path.join(rootDir, "supervisor.config.codex.json"),
+    path.join(rootDir, "supervisor.config.coderabbit.json"),
+    path.join(rootDir, "supervisor.config.typescript-node.json"),
+    path.join(rootDir, "supervisor.config.nextjs.json"),
+    path.join(rootDir, "supervisor.config.python-cli.json"),
+  ];
+
+  for (const examplePath of examplePaths) {
+    const raw = JSON.parse(await fs.readFile(examplePath, "utf8")) as { localReviewEnabled?: unknown };
+    assert.equal(raw.localReviewEnabled, false, `${path.relative(rootDir, examplePath)} should keep local review disabled by default`);
+  }
+});
+
+test("shipped example configs keep local-review follow-up issue creation opt-in", async () => {
+  const rootDir = path.resolve(__dirname, "..");
+  const examplePaths = [
+    path.join(rootDir, "supervisor.config.example.json"),
+    path.join(rootDir, "supervisor.config.copilot.json"),
+    path.join(rootDir, "supervisor.config.codex.json"),
+    path.join(rootDir, "supervisor.config.coderabbit.json"),
+    path.join(rootDir, "supervisor.config.typescript-node.json"),
+    path.join(rootDir, "supervisor.config.nextjs.json"),
+    path.join(rootDir, "supervisor.config.python-cli.json"),
+    path.join(rootDir, "docs", "examples", "atlaspm.supervisor.config.example.json"),
+  ];
+
+  for (const examplePath of examplePaths) {
+    const raw = JSON.parse(await fs.readFile(examplePath, "utf8")) as {
+      localReviewFollowUpIssueCreationEnabled?: unknown;
+    };
+    assert.equal(
+      raw.localReviewFollowUpIssueCreationEnabled,
+      false,
+      `${path.relative(rootDir, examplePath)} should keep local-review follow-up issue creation opt-in`,
+    );
+  }
+});
+
+test("shipped example configs keep local-review same-PR follow-up repair opt-in", async () => {
+  const rootDir = path.resolve(__dirname, "..");
+  const examplePaths = [
+    path.join(rootDir, "supervisor.config.example.json"),
+    path.join(rootDir, "supervisor.config.copilot.json"),
+    path.join(rootDir, "supervisor.config.codex.json"),
+    path.join(rootDir, "supervisor.config.coderabbit.json"),
+    path.join(rootDir, "supervisor.config.typescript-node.json"),
+    path.join(rootDir, "supervisor.config.nextjs.json"),
+    path.join(rootDir, "supervisor.config.python-cli.json"),
+    path.join(rootDir, "docs", "examples", "atlaspm.supervisor.config.example.json"),
+  ];
+
+  for (const examplePath of examplePaths) {
+    const raw = JSON.parse(await fs.readFile(examplePath, "utf8")) as {
+      localReviewFollowUpRepairEnabled?: unknown;
+    };
+    assert.equal(
+      raw.localReviewFollowUpRepairEnabled,
+      false,
+      `${path.relative(rootDir, examplePath)} should keep local-review same-PR follow-up repair opt-in`,
+    );
+  }
+});
+
+test("shipped example configs recommend blocked for high-severity local review findings", async () => {
+  const rootDir = path.resolve(__dirname, "..");
+  const examplePaths = [
+    path.join(rootDir, "supervisor.config.example.json"),
+    path.join(rootDir, "supervisor.config.copilot.json"),
+    path.join(rootDir, "supervisor.config.codex.json"),
+    path.join(rootDir, "supervisor.config.coderabbit.json"),
+    path.join(rootDir, "supervisor.config.typescript-node.json"),
+    path.join(rootDir, "supervisor.config.nextjs.json"),
+    path.join(rootDir, "supervisor.config.python-cli.json"),
+    path.join(rootDir, "docs", "examples", "atlaspm.supervisor.config.example.json"),
+  ];
+
+  for (const examplePath of examplePaths) {
+    const raw = JSON.parse(await fs.readFile(examplePath, "utf8")) as { localReviewHighSeverityAction?: unknown };
+    assert.equal(
+      raw.localReviewHighSeverityAction,
+      "blocked",
+      `${path.relative(rootDir, examplePath)} should recommend blocked for high-severity local review findings`,
+    );
+  }
+});
+
+test("shipped example configs use the issue-scoped journal path template and preserve custom overrides", async (t) => {
+  const rootDir = path.resolve(__dirname, "..");
+  const expectedJournalPath = ".codex-supervisor/issues/{issueNumber}/issue-journal.md";
+  const examplePaths = [
+    path.join(rootDir, "supervisor.config.example.json"),
+    path.join(rootDir, "supervisor.config.copilot.json"),
+    path.join(rootDir, "supervisor.config.codex.json"),
+    path.join(rootDir, "supervisor.config.coderabbit.json"),
+    path.join(rootDir, "supervisor.config.typescript-node.json"),
+    path.join(rootDir, "supervisor.config.nextjs.json"),
+    path.join(rootDir, "supervisor.config.python-cli.json"),
+    path.join(rootDir, "docs", "examples", "atlaspm.supervisor.config.example.json"),
+  ];
+
+  for (const examplePath of examplePaths) {
+    const raw = JSON.parse(await fs.readFile(examplePath, "utf8")) as { issueJournalRelativePath?: unknown };
+    assert.equal(
+      raw.issueJournalRelativePath,
+      expectedJournalPath,
+      `${path.relative(rootDir, examplePath)} should use the issue-scoped journal path template`,
+    );
+  }
+
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  const customJournalPath = ".codex-supervisor/custom-journal.md";
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      codexBinary: "codex",
+      branchPrefix: "codex/issue-",
+      issueJournalRelativePath: customJournalPath,
+    }),
+    "utf8",
+  );
+
+  const config = loadConfig(configPath);
+  assert.equal(config.issueJournalRelativePath, customJournalPath);
+});
+
+test("shipped config profiles declare the intended review bot logins", async () => {
+  const rootDir = path.resolve(__dirname, "..");
+  const expectedProfiles = new Map<string, string[]>([
+    ["supervisor.config.example.json", ["copilot-pull-request-reviewer"]],
+    ["supervisor.config.copilot.json", ["copilot-pull-request-reviewer"]],
+    ["supervisor.config.codex.json", ["chatgpt-codex-connector"]],
+    ["supervisor.config.coderabbit.json", ["coderabbitai", "coderabbitai[bot]"]],
+    ["supervisor.config.typescript-node.json", ["copilot-pull-request-reviewer"]],
+    ["supervisor.config.nextjs.json", ["copilot-pull-request-reviewer"]],
+    ["supervisor.config.python-cli.json", ["copilot-pull-request-reviewer"]],
+  ]);
+
+  for (const [relativePath, expectedReviewBotLogins] of expectedProfiles) {
+    const profilePath = path.join(rootDir, relativePath);
+    const raw = JSON.parse(await fs.readFile(profilePath, "utf8")) as { reviewBotLogins?: unknown };
+    assert.deepEqual(
+      raw.reviewBotLogins,
+      expectedReviewBotLogins,
+      `${relativePath} should declare the expected reviewBotLogins`,
+    );
+  }
+});
+
+test("shipped Codex Connector profile opts into aggressive cleanup and auto-merge only for Codex", async () => {
+  const rootDir = path.resolve(__dirname, "..");
+  type AggressiveProfileFlags = {
+    staleConfiguredBotReviewPolicy?: unknown;
+    verifiedNoSourceChangeReviewThreadAutoResolve?: unknown;
+    verifiedCurrentHeadRepairReviewThreadAutoResolve?: unknown;
+    codexConnectorAutoMergeEnabled?: unknown;
+  };
+  const readProfile = async (relativePath: string): Promise<AggressiveProfileFlags> =>
+    JSON.parse(await fs.readFile(path.join(rootDir, relativePath), "utf8")) as AggressiveProfileFlags;
+  const codex = await readProfile("supervisor.config.codex.json");
+
+  assert.equal(codex.staleConfiguredBotReviewPolicy, "reply_and_resolve");
+  assert.equal(codex.verifiedNoSourceChangeReviewThreadAutoResolve, true);
+  assert.equal(codex.verifiedCurrentHeadRepairReviewThreadAutoResolve, true);
+  assert.equal(codex.codexConnectorAutoMergeEnabled, true);
+
+  const nonCodexProfiles = [
+    "supervisor.config.example.json",
+    "supervisor.config.copilot.json",
+    "supervisor.config.coderabbit.json",
+    "supervisor.config.typescript-node.json",
+    "supervisor.config.nextjs.json",
+    "supervisor.config.python-cli.json",
+  ];
+  for (const relativePath of nonCodexProfiles) {
+    const profile = await readProfile(relativePath);
+    assert.notEqual(profile.staleConfiguredBotReviewPolicy, "reply_and_resolve", `${relativePath} must not auto-resolve stale bot threads`);
+    assert.notEqual(
+      profile.verifiedNoSourceChangeReviewThreadAutoResolve,
+      true,
+      `${relativePath} must not auto-resolve verified no-source-change threads`,
+    );
+    assert.notEqual(
+      profile.verifiedCurrentHeadRepairReviewThreadAutoResolve,
+      true,
+      `${relativePath} must not auto-resolve verified current-head repair threads`,
+    );
+    assert.notEqual(profile.codexConnectorAutoMergeEnabled, true, `${relativePath} must not enable Codex Connector auto-merge`);
+  }
+});
+
+test("shipped CodeRabbit starter profile uses a fail-fast repoSlug placeholder", async () => {
+  const rootDir = path.resolve(__dirname, "..");
+  const raw = (await readShippedProfileJson(rootDir, "supervisor.config.coderabbit.json")) as { repoSlug?: unknown };
+
+  assertCodeRabbitStarterRepoSlugPlaceholder(raw);
+});
+
+test("shipped starter profiles fail closed with first-run placeholder guidance", async () => {
+  const rootDir = path.resolve(__dirname, "..");
+  const expectedInvalidFields = new Map<string, string[]>([
+    ["supervisor.config.example.json", ["repoPath", "repoSlug", "workspaceRoot", "codexBinary"]],
+    ["supervisor.config.copilot.json", ["repoPath", "repoSlug", "workspaceRoot", "codexBinary"]],
+    ["supervisor.config.codex.json", ["repoPath", "repoSlug", "workspaceRoot", "codexBinary"]],
+    ["supervisor.config.coderabbit.json", ["repoSlug"]],
+    ["supervisor.config.typescript-node.json", ["repoPath", "repoSlug", "workspaceRoot", "codexBinary"]],
+    ["supervisor.config.nextjs.json", ["repoPath", "repoSlug", "workspaceRoot", "codexBinary"]],
+    [
+      "supervisor.config.python-cli.json",
+      ["repoPath", "repoSlug", "workspaceRoot", "codexBinary", "workspacePreparationCommand", "localCiCommand"],
+    ],
+  ]);
+
+  for (const [relativePath, invalidFields] of expectedInvalidFields) {
+    const raw = await readShippedProfileJson(rootDir, relativePath);
+    const summary = loadConfigSummaryFromDocument(raw, path.join(rootDir, relativePath));
+
+    assert.equal(summary.status, "invalid_config", `${relativePath} should require placeholder replacement`);
+    assert.deepEqual(summary.invalidFields, invalidFields, `${relativePath} should identify starter placeholders`);
+    assert.match(summary.error ?? "", /Starter profile placeholders must be replaced before this config can run/);
+    assert.match(summary.error ?? "", /node dist\/index\.js doctor --config <supervisor-config-path>/);
+    assert.throws(
+      () => loadConfig(path.join(rootDir, relativePath)),
+      /Starter profile placeholders must be replaced before this config can run/,
+      `${relativePath} should fail closed before runtime use`,
+    );
+  }
+});
+
+test("shipped CodeRabbit starter profile validation ignores unstaged host-local active profile drift", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-coderabbit-profile-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  initGitRepo(tempDir);
+
+  const relativeProfilePath = "supervisor.config.coderabbit.json";
+  const profilePath = path.join(tempDir, relativeProfilePath);
+  await fs.writeFile(profilePath, JSON.stringify({ repoSlug: "REPLACE_ME" }), "utf8");
+  commitAll(tempDir, "seed coderabbit profile");
+
+  await fs.writeFile(profilePath, JSON.stringify({ repoSlug: "owner/repo" }), "utf8");
+  assertCodeRabbitStarterRepoSlugPlaceholder(
+    (await readShippedProfileJson(tempDir, relativeProfilePath)) as { repoSlug?: unknown },
+  );
+
+  execFileSync("git", ["add", relativeProfilePath], { cwd: tempDir, stdio: "ignore" });
+  assert.throws(
+    () =>
+      assertCodeRabbitStarterRepoSlugPlaceholder(
+        JSON.parse(
+          execFileSync("git", ["show", `:${relativeProfilePath}`], {
+            cwd: tempDir,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+          }),
+        ) as { repoSlug?: unknown },
+      ),
+    /should force operators to replace repoSlug before loadConfig accepts it/,
+  );
+});
+
+test("shipped CodeRabbit starter profile preserves the default Epic skip policy", async () => {
+  const rootDir = path.resolve(__dirname, "..");
+  const profilePath = path.join(rootDir, "supervisor.config.coderabbit.json");
+  const raw = JSON.parse(await fs.readFile(profilePath, "utf8")) as { skipTitlePrefixes?: unknown };
+
+  assert.deepEqual(
+    raw.skipTitlePrefixes,
+    ["Epic:"],
+    "supervisor.config.coderabbit.json should preserve the default Epic skip policy unless operators intentionally override it",
+  );
+});
+
+test("shipped CodeRabbit starter profile enables strict current-head provider gating with a bounded timeout", async () => {
+  const rootDir = path.resolve(__dirname, "..");
+  const profilePath = path.join(rootDir, "supervisor.config.coderabbit.json");
+  const raw = JSON.parse(await fs.readFile(profilePath, "utf8")) as {
+    configuredBotRequireCurrentHeadSignal?: unknown;
+    configuredBotCurrentHeadSignalTimeoutMinutes?: unknown;
+    configuredBotCurrentHeadSignalTimeoutAction?: unknown;
+  };
+
+  assert.equal(raw.configuredBotRequireCurrentHeadSignal, true);
+  assert.equal(raw.configuredBotCurrentHeadSignalTimeoutMinutes, 10);
+  assert.equal(raw.configuredBotCurrentHeadSignalTimeoutAction, "block");
+});
+
+test("shipped Codex Connector starter profile uses a faster fail-closed review request cadence", async () => {
+  const rootDir = path.resolve(__dirname, "..");
+  const profilePath = path.join(rootDir, "supervisor.config.codex.json");
+  const raw = JSON.parse(await fs.readFile(profilePath, "utf8")) as {
+    pollIntervalSeconds?: unknown;
+    mergeCriticalRecheckSeconds?: unknown;
+    configuredBotRequireCurrentHeadSignal?: unknown;
+    configuredBotCurrentHeadSignalTimeoutMinutes?: unknown;
+    configuredBotCurrentHeadSignalTimeoutAction?: unknown;
+    sameFailureSignatureRepeatLimit?: unknown;
+  };
+
+  assert.equal(raw.configuredBotRequireCurrentHeadSignal, true);
+  assert.equal(raw.configuredBotCurrentHeadSignalTimeoutMinutes, 5);
+  assert.equal(raw.configuredBotCurrentHeadSignalTimeoutAction, "request_review_comment");
+  assert.equal(raw.mergeCriticalRecheckSeconds, 30);
+  assert.equal(raw.pollIntervalSeconds, 120);
+  assert.equal(raw.sameFailureSignatureRepeatLimit, 3);
+});
+
+test("shipped CodeRabbit starter profile adopts the repo-owned local CI gate", async () => {
+  const rootDir = path.resolve(__dirname, "..");
+  const profilePath = path.join(rootDir, "supervisor.config.coderabbit.json");
+  const raw = JSON.parse(await fs.readFile(profilePath, "utf8")) as { localCiCommand?: unknown };
+
+  assert.equal(raw.localCiCommand, "npm run verify:supervisor-pre-pr");
+});
+
+test("shipped TypeScript and Node starter profile publishes npm setup and verification commands", async () => {
+  const rootDir = path.resolve(__dirname, "..");
+  const relativePath = "supervisor.config.typescript-node.json";
+  const raw = (await readShippedProfileJson(rootDir, relativePath)) as {
+    workspacePreparationCommand?: unknown;
+    localCiCommand?: unknown;
+    skipTitlePrefixes?: unknown;
+  };
+  const summary = loadConfigSummaryFromDocument(raw, path.join(rootDir, relativePath));
+  const docs = await Promise.all([
+    fs.readFile(path.join(rootDir, "README.md"), "utf8"),
+    fs.readFile(path.join(rootDir, "docs", "configuration.md"), "utf8"),
+    fs.readFile(path.join(rootDir, "docs", "getting-started.md"), "utf8"),
+    fs.readFile(path.join(rootDir, "docs", "examples", "typescript-node.md"), "utf8"),
+  ]);
+
+  assert.equal(raw.workspacePreparationCommand, "npm ci");
+  assert.equal(raw.localCiCommand, "npm run verify:pre-pr");
+  assert.deepEqual(raw.skipTitlePrefixes, ["Epic:"]);
+  assert.equal(summary.status, "invalid_config");
+  assert.deepEqual(summary.invalidFields, ["repoPath", "repoSlug", "workspaceRoot", "codexBinary"]);
+
+  for (const content of docs) {
+    assert.match(content, /supervisor\.config\.typescript-node\.json/);
+  }
+
+  const exampleDoc = docs[3] ?? "";
+  assert.match(exampleDoc, /npm ci/);
+  assert.match(exampleDoc, /npm run verify:pre-pr/);
+  assert.match(exampleDoc, /"build": "tsc -p tsconfig\.json"/);
+  assert.match(exampleDoc, /"test": "node --test"/);
+  assert.match(exampleDoc, /do not assume every TypeScript\/Node repo has these exact scripts/i);
+  assert.doesNotMatch(exampleDoc, /\/Users\/[A-Za-z0-9._-]+\//);
+  assert.doesNotMatch(exampleDoc, /C:\\Users\\[A-Za-z0-9._-]+\\/);
+});
+
+test("shipped Next.js starter profile publishes npm posture and execution-ready first issue", async () => {
+  const rootDir = path.resolve(__dirname, "..");
+  const relativePath = "supervisor.config.nextjs.json";
+  const raw = (await readShippedProfileJson(rootDir, relativePath)) as {
+    workspacePreparationCommand?: unknown;
+    localCiCommand?: unknown;
+    skipTitlePrefixes?: unknown;
+  };
+  const summary = loadConfigSummaryFromDocument(raw, path.join(rootDir, relativePath));
+  const docs = await Promise.all([
+    fs.readFile(path.join(rootDir, "README.md"), "utf8"),
+    fs.readFile(path.join(rootDir, "docs", "configuration.md"), "utf8"),
+    fs.readFile(path.join(rootDir, "docs", "getting-started.md"), "utf8"),
+    fs.readFile(path.join(rootDir, "docs", "examples", "nextjs.md"), "utf8"),
+  ]);
+
+  assert.equal(raw.workspacePreparationCommand, "npm ci");
+  assert.equal(raw.localCiCommand, "npm run verify:pre-pr");
+  assert.deepEqual(raw.skipTitlePrefixes, ["Epic:"]);
+  assert.equal(summary.status, "invalid_config");
+  assert.deepEqual(summary.invalidFields, ["repoPath", "repoSlug", "workspaceRoot", "codexBinary"]);
+
+  for (const content of docs) {
+    assert.match(content, /supervisor\.config\.nextjs\.json/);
+  }
+
+  const exampleDoc = docs[3] ?? "";
+  assert.match(exampleDoc, /npm ci/);
+  assert.match(exampleDoc, /npm run verify:pre-pr/);
+  assert.match(exampleDoc, /npm run build/);
+  assert.match(exampleDoc, /npm run lint/);
+  assert.match(exampleDoc, /npm run test/);
+  assert.match(exampleDoc, /do not assume every Next\.js app defines all of these scripts/i);
+  assert.doesNotMatch(exampleDoc, /\/Users\/[A-Za-z0-9._-]+\//);
+  assert.doesNotMatch(exampleDoc, /C:\\Users\\[A-Za-z0-9._-]+\\/);
+
+  const match = exampleDoc.match(
+    /<!-- nextjs-first-issue:start -->\s*```md\s*([\s\S]*?)```\s*<!-- nextjs-first-issue:end -->/,
+  );
+  assert.ok(match, "Next.js starter doc must include the marked sample issue body");
+  const sampleIssue: GitHubIssue = {
+    number: 101,
+    title: "Add metadata test for article page",
+    body: match[1].trim(),
+    createdAt: "2026-04-27T00:00:00Z",
+    updatedAt: "2026-04-27T00:00:00Z",
+    url: "https://example.com/issues/101",
+    labels: [{ name: "codex" }],
+    state: "OPEN",
+  };
+
+  assert.deepEqual(validateIssueMetadataSyntax(sampleIssue), []);
+  const lint = lintExecutionReadyIssueBody(sampleIssue);
+  assert.equal(lint.isExecutionReady, true);
+  assert.deepEqual(lint.missingRequired, []);
+  assert.deepEqual(lint.missingRecommended, []);
+});
+
+test("shipped Python and CLI starter profile publishes portable command substitution guidance", async () => {
+  const rootDir = path.resolve(__dirname, "..");
+  const relativePath = "supervisor.config.python-cli.json";
+  const raw = (await readShippedProfileJson(rootDir, relativePath)) as {
+    workspacePreparationCommand?: unknown;
+    localCiCommand?: unknown;
+    skipTitlePrefixes?: unknown;
+  };
+  const summary = loadConfigSummaryFromDocument(raw, path.join(rootDir, relativePath));
+  const docs = await Promise.all([
+    fs.readFile(path.join(rootDir, "README.md"), "utf8"),
+    fs.readFile(path.join(rootDir, "docs", "configuration.md"), "utf8"),
+    fs.readFile(path.join(rootDir, "docs", "getting-started.md"), "utf8"),
+    fs.readFile(path.join(rootDir, "docs", "examples", "python-cli.md"), "utf8"),
+  ]);
+
+  assert.equal(raw.workspacePreparationCommand, "<replace-with-repo-owned-setup-command>");
+  assert.equal(raw.localCiCommand, "<replace-with-repo-owned-pre-pr-command>");
+  assert.deepEqual(raw.skipTitlePrefixes, ["Epic:"]);
+  assert.equal(summary.status, "invalid_config");
+  assert.deepEqual(summary.invalidFields, [
+    "repoPath",
+    "repoSlug",
+    "workspaceRoot",
+    "codexBinary",
+    "workspacePreparationCommand",
+    "localCiCommand",
+  ]);
+
+  for (const content of docs) {
+    assert.match(content, /supervisor\.config\.python-cli\.json/);
+  }
+
+  const exampleDoc = docs[3] ?? "";
+  assert.match(exampleDoc, /<replace-with-repo-owned-setup-command>/);
+  assert.match(exampleDoc, /<replace-with-repo-owned-pre-pr-command>/);
+  assert.match(exampleDoc, /python -m pytest/);
+  assert.match(exampleDoc, /python -m build/);
+  assert.match(exampleDoc, /do not assume every Python package or CLI tool uses these commands/i);
+  assert.doesNotMatch(exampleDoc, /\/Users\/[A-Za-z0-9._-]+\//);
+  assert.doesNotMatch(exampleDoc, /C:\\Users\\[A-Za-z0-9._-]+\\/);
+
+  const match = exampleDoc.match(
+    /<!-- python-cli-first-issue:start -->\s*```md\s*([\s\S]*?)```\s*<!-- python-cli-first-issue:end -->/,
+  );
+  assert.ok(match, "Python/CLI starter doc must include the marked sample issue body");
+  const sampleIssue: GitHubIssue = {
+    number: 102,
+    title: "Add CLI version flag test",
+    body: match[1].trim(),
+    createdAt: "2026-04-27T00:00:00Z",
+    updatedAt: "2026-04-27T00:00:00Z",
+    url: "https://example.com/issues/102",
+    labels: [{ name: "codex" }],
+    state: "OPEN",
+  };
+
+  assert.deepEqual(validateIssueMetadataSyntax(sampleIssue), []);
+  const lint = lintExecutionReadyIssueBody(sampleIssue);
+  assert.equal(lint.isExecutionReady, true);
+  assert.deepEqual(lint.missingRequired, []);
+  assert.deepEqual(lint.missingRecommended, []);
+});
+
+test("repo gitignore ignores workstation noise and live issue journals without hiding intentional files", async (t) => {
+  const rootDir = path.resolve(__dirname, "..");
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-gitignore-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  await fs.copyFile(path.join(rootDir, ".gitignore"), path.join(tempDir, ".gitignore"));
+  await fs.writeFile(path.join(tempDir, ".DS_Store"), "", "utf8");
+  await fs.mkdir(path.join(tempDir, ".codex-supervisor", "issues", "1443"), { recursive: true });
+  await fs.mkdir(path.join(tempDir, ".codex-supervisor", "issues", "1443abc"), { recursive: true });
+  await fs.mkdir(path.join(tempDir, ".codex-supervisor", "issues", "fixtures"), { recursive: true });
+  await fs.mkdir(path.join(tempDir, ".codex-supervisor", "replay"), { recursive: true });
+  await fs.writeFile(path.join(tempDir, ".codex-supervisor", "issues", "1443", "issue-journal.md"), "", "utf8");
+  await fs.writeFile(path.join(tempDir, ".codex-supervisor", "issues", "1443abc", "issue-journal.md"), "", "utf8");
+  await fs.writeFile(path.join(tempDir, ".codex-supervisor", "issues", "fixtures", "issue-journal.md"), "", "utf8");
+  await fs.writeFile(path.join(tempDir, ".codex-supervisor", "loop.out"), "", "utf8");
+  await fs.writeFile(path.join(tempDir, ".codex-supervisor", "current-reconciliation-phase.json"), "{}", "utf8");
+  await fs.writeFile(path.join(tempDir, ".codex-supervisor", "replay", "replay-corpus-mismatch-details.json"), "{}", "utf8");
+  await fs.writeFile(path.join(tempDir, "supervisor.config.coderabbit.json"), "{}", "utf8");
+
+  execFileSync("git", ["init"], {
+    cwd: tempDir,
+    stdio: "ignore",
+  });
+
+  const ignoredPath = execFileSync("git", ["check-ignore", ".DS_Store"], {
+    cwd: tempDir,
+    encoding: "utf8",
+  }).trim();
+  assert.equal(ignoredPath, ".DS_Store");
+
+  const ignoredJournalPath = execFileSync("git", ["check-ignore", ".codex-supervisor/issues/1443/issue-journal.md"], {
+    cwd: tempDir,
+    encoding: "utf8",
+  }).trim();
+  assert.equal(ignoredJournalPath, ".codex-supervisor/issues/1443/issue-journal.md");
+
+  const ignoredLoopPath = execFileSync("git", ["check-ignore", ".codex-supervisor/loop.out"], {
+    cwd: tempDir,
+    encoding: "utf8",
+  }).trim();
+  assert.equal(ignoredLoopPath, ".codex-supervisor/loop.out");
+
+  const ignoredPhasePath = execFileSync("git", ["check-ignore", ".codex-supervisor/current-reconciliation-phase.json"], {
+    cwd: tempDir,
+    encoding: "utf8",
+  }).trim();
+  assert.equal(ignoredPhasePath, ".codex-supervisor/current-reconciliation-phase.json");
+
+  const ignoredReplayMismatchPath = execFileSync("git", ["check-ignore", ".codex-supervisor/replay/replay-corpus-mismatch-details.json"], {
+    cwd: tempDir,
+    encoding: "utf8",
+  }).trim();
+  assert.equal(ignoredReplayMismatchPath, ".codex-supervisor/replay/replay-corpus-mismatch-details.json");
+
+  const nonNumericIssueLikeExitCode = (() => {
+    try {
+      execFileSync("git", ["check-ignore", ".codex-supervisor/issues/1443abc/issue-journal.md"], {
+        cwd: tempDir,
+        stdio: "ignore",
+      });
+      return 0;
+    } catch (error) {
+      const exitCode = (error as NodeJS.ErrnoException & { status?: number }).status;
+      return typeof exitCode === "number" ? exitCode : -1;
+    }
+  })();
+  assert.equal(nonNumericIssueLikeExitCode, 1);
+
+  const coderabbitExitCode = (() => {
+    try {
+      execFileSync("git", ["check-ignore", "supervisor.config.coderabbit.json"], {
+        cwd: tempDir,
+        stdio: "ignore",
+      });
+      return 0;
+    } catch (error) {
+      const exitCode = (error as NodeJS.ErrnoException & { status?: number }).status;
+      return typeof exitCode === "number" ? exitCode : -1;
+    }
+  })();
+  assert.equal(coderabbitExitCode, 1);
+
+  const fixtureExitCode = (() => {
+    try {
+      execFileSync("git", ["check-ignore", ".codex-supervisor/issues/fixtures/issue-journal.md"], {
+        cwd: tempDir,
+        stdio: "ignore",
+      });
+      return 0;
+    } catch (error) {
+      const exitCode = (error as NodeJS.ErrnoException & { status?: number }).status;
+      return typeof exitCode === "number" ? exitCode : -1;
+    }
+  })();
+  assert.equal(fixtureExitCode, 1);
+});
+
+test("README stays a lightweight landing page with provider profile guidance and a docs map", async () => {
+  const rootDir = path.resolve(__dirname, "..");
+  const readme = await fs.readFile(path.join(rootDir, "README.md"), "utf8");
+
+  assert.match(readme, /^## What It Is$/m);
+  assert.match(readme, /^## Who It Is For$/m);
+  assert.match(readme, /^## Quick Start$/m);
+  assert.match(readme, /^## Provider Profiles$/m);
+  assert.match(readme, /^## Docs Map$/m);
+  assert.match(readme, /\[Getting started\]\(\.\/docs\/getting-started\.md\)/i);
+  assert.match(readme, /\[Configuration reference\]\(\.\/docs\/configuration\.md\)/i);
+  assert.match(readme, /\[Local review reference\]\(\.\/docs\/local-review\.md\)/i);
+  assert.match(readme, /\[Architecture\]\(\.\/docs\/architecture\.md\)/i);
+  assert.match(readme, /\[Issue metadata\]\(\.\/docs\/issue-metadata\.md\)/i);
+  assert.match(readme, /\[GSD to GitHub issues\]\(\.\/docs\/examples\/gsd-to-github-issues\.md\)/i);
+  assert.match(readme, /\[Release readiness checklist\]\(\.\/docs\/validation-checklist\.md\)/i);
+  assert.match(readme, /Copilot profile/i);
+  assert.match(readme, /Codex Connector profile/i);
+  assert.match(readme, /CodeRabbit profile/i);
+  assert.match(readme, /review provider profile/i);
+  assert.match(readme, /provider-side setup/i);
+  assert.match(readme, /supervisor\.config\.copilot\.json/i);
+  assert.match(readme, /supervisor\.config\.codex\.json/i);
+  assert.match(readme, /supervisor\.config\.coderabbit\.json/i);
+  assert.doesNotMatch(readme, /review-bot profile/i);
+  assert.doesNotMatch(readme, /^## Run states$/m);
+  assert.doesNotMatch(readme, /^## State backends$/m);
+  assert.doesNotMatch(readme, /^## Commands$/m);
+});
+
+test("getting started links to focused configuration and local review references", async () => {
+  const rootDir = path.resolve(__dirname, "..");
+  const gettingStarted = await fs.readFile(path.join(rootDir, "docs", "getting-started.md"), "utf8");
+  const localReview = await fs.readFile(path.join(rootDir, "docs", "local-review.md"), "utf8");
+  const issueMetadata = await fs.readFile(path.join(rootDir, "docs", "issue-metadata.md"), "utf8");
+  const configuration = await fs.readFile(path.join(rootDir, "docs", "configuration.md"), "utf8");
+
+  assert.match(gettingStarted, /\[Configuration reference\]\(\.\/configuration\.md\)/i);
+  assert.match(gettingStarted, /\[Local review reference\]\(\.\/local-review\.md\)/i);
+  assert.match(gettingStarted, /\[Issue metadata reference\]\(\.\/issue-metadata\.md\)/i);
+  assert.match(gettingStarted, /review provider profile/i);
+  assert.match(gettingStarted, /provider-specific review settings/i);
+  assert.match(gettingStarted, /disabled by default/i);
+  assert.match(gettingStarted, /recommended once-enabled/i);
+  assert.doesNotMatch(gettingStarted, /review-bot profile/i);
+  assert.doesNotMatch(gettingStarted, /^### Option 1: Auto-detect roles$/m);
+  assert.doesNotMatch(gettingStarted, /^### Option 2: Explicit roles$/m);
+  assert.doesNotMatch(gettingStarted, /^### What specialist roles are for$/m);
+  assert.doesNotMatch(gettingStarted, /^Committed Local Review Swarm guardrails are maintained under `docs\/shared-memory\/`:$/m);
+  assert.doesNotMatch(gettingStarted, /^## Issue metadata format$/m);
+
+  assert.match(localReview, /^# Local Review Reference$/m);
+  assert.match(localReview, /^## Choosing reviewer roles$/m);
+  assert.match(localReview, /^## Artifacts, thresholds, and guardrails$/m);
+  assert.match(localReview, /disabled by default/i);
+  assert.match(localReview, /recommended once-enabled/i);
+
+  assert.match(configuration, /^## Model Routing Quick Recipes$/m);
+  assert.match(configuration, /authoritative fields for Codex model selection/i);
+  assert.match(configuration, /"codexModelStrategy": "inherit"/);
+  assert.match(configuration, /"boundedRepairModelStrategy": "fixed"/);
+  assert.match(configuration, /"boundedRepairModel": "gpt-5\.4-mini"/);
+  assert.match(configuration, /"localReviewModelStrategy": "alias"/);
+  assert.match(configuration, /"localReviewModel": "local-review-fast"/);
+  assert.match(configuration, /fixed` and `alias`.*fail closed unless the matching model field is set explicitly/i);
+  assert.match(configuration, /requires `codexModel`/i);
+  assert.match(configuration, /requires `boundedRepairModel`/i);
+  assert.match(configuration, /requires `localReviewModel`/i);
+
+  assert.match(configuration, /\| Profile \| Start from \| Choose when \| Supervisor watches \| First-run caveat \|/);
+  assert.match(configuration, /\| Copilot \| \[supervisor\.config\.copilot\.json\]\(\.\.\/supervisor\.config\.copilot\.json\) \|/);
+  assert.match(configuration, /\| Codex Connector \| \[supervisor\.config\.codex\.json\]\(\.\.\/supervisor\.config\.codex\.json\) \|/);
+  assert.match(configuration, /\| CodeRabbit \| \[supervisor\.config\.coderabbit\.json\]\(\.\.\/supervisor\.config\.coderabbit\.json\) \|/);
+  assert.match(configuration, /current-head CodeRabbit review signals/i);
+  assert.match(configuration, /`repoSlug: "REPLACE_ME"`/);
+  assert.match(configuration, /\[review-provider settings\]\(#review-and-merge-policy\)/i);
+
+  assert.match(issueMetadata, /^# Issue Metadata$/m);
+  assert.match(issueMetadata, /^## Canonical fields$/m);
+  assert.match(issueMetadata, /^## How scheduling uses the fields$/m);
+  assert.match(issueMetadata, /pages through matching open issues/i);
+  assert.match(issueMetadata, /matching open backlog/i);
+  assert.match(issueMetadata, /older issue should remain discoverable/i);
+  assert.match(issueMetadata, /^## Issue body template$/m);
+  assert.match(issueMetadata, /Part of: #42/m);
+  assert.match(issueMetadata, /Depends on: #41/m);
+  assert.match(issueMetadata, /child issues should use `Part of: #42` to associate with an epic/i);
+  assert.match(issueMetadata, /do not use `Depends on: #42` when `#42` is only the parent epic/i);
+  assert.match(issueMetadata, /recommended/i);
+  assert.match(issueMetadata, /discouraged/i);
+  assert.match(issueMetadata, /Parallelizable: No/m);
+  assert.match(issueMetadata, /## Execution order/m);
+  assert.match(issueMetadata, /2 of 4/m);
+  assert.match(issueMetadata, /## Acceptance criteria/m);
+  assert.match(issueMetadata, /## Verification/m);
+});
+
+test("buildSetupConfigPreview preserves unknown fields and leaves the config file untouched", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-preview-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  const originalDocument = {
+    repoPath: ".",
+    repoSlug: "owner/repo",
+    defaultBranch: "main",
+    localReviewFollowUpRepairEnabled: true,
+    staleConfiguredBotReviewPolicy: "reply_only",
+    approvedTrackedTopLevelEntries: ["README.md"],
+    experimentalFlag: {
+      keep: true,
+    },
+    reviewBotLogins: ["existing-review-bot"],
+  };
+
+  await fs.writeFile(configPath, JSON.stringify(originalDocument, null, 2), "utf8");
+  const before = await fs.readFile(configPath, "utf8");
+
+  const preview = buildSetupConfigPreview({
+    configPath,
+    reviewProviderProfile: "codex",
+  });
+
+  const after = await fs.readFile(configPath, "utf8");
+
+  assert.equal(preview.kind, "setup_config_preview");
+  assert.equal(preview.mode, "patch");
+  assert.equal(preview.writesConfig, false);
+  assert.equal(preview.selectedReviewProviderProfile, "codex");
+  assert.deepEqual(preview.preservedUnknownFields, ["experimentalFlag"]);
+  assert.equal(preview.document.localReviewFollowUpRepairEnabled, true);
+  assert.equal(preview.document.staleConfiguredBotReviewPolicy, "reply_only");
+  assert.deepEqual(preview.document.approvedTrackedTopLevelEntries, ["README.md"]);
+  assert.deepEqual(preview.document.experimentalFlag, { keep: true });
+  assert.deepEqual(preview.document.reviewBotLogins, ["chatgpt-codex-connector"]);
+  assert.deepEqual(
+    preview.dangerousExplicitOptIns.map((field) => [
+      field.key,
+      field.requiresConfirmation,
+      field.operatorImpact.length > 0,
+    ]),
+    [
+      ["localReviewFollowUpRepairEnabled", true, true],
+      ["localReviewManualReviewRepairEnabled", true, true],
+      ["localReviewFollowUpIssueCreationEnabled", true, true],
+      ["localReviewHighSeverityAction", true, true],
+      ["staleConfiguredBotReviewPolicy", true, true],
+      ["approvedTrackedTopLevelEntries", true, true],
+    ],
+  );
+  assert.equal(preview.validation.status, "invalid_config");
+  assert.deepEqual(preview.validation.invalidFields, ["workspaceRoot", "codexBinary"]);
+  assert.match(preview.validation.error ?? "", /Starter profile placeholders must be replaced/i);
+  assert.equal(before, after);
+});
+
+test("updateSetupConfig rejects dangerous explicit opt-ins without typed confirmation before touching the config file", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-dangerous-confirm-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  const originalDocument = {
+    repoPath: ".",
+    repoSlug: "owner/repo",
+    defaultBranch: "main",
+    workspaceRoot: "./worktrees",
+    stateFile: "./state.json",
+    codexBinary: "codex",
+    branchPrefix: "codex/issue-",
+    reviewBotLogins: ["chatgpt-codex-connector"],
+  };
+  await fs.writeFile(configPath, JSON.stringify(originalDocument, null, 2), "utf8");
+  const before = await fs.readFile(configPath, "utf8");
+
+  await assert.rejects(
+    updateSetupConfig({
+      configPath,
+      changes: {
+        localReviewFollowUpIssueCreationEnabled: true,
+        localReviewHighSeverityAction: "retry",
+        staleConfiguredBotReviewPolicy: "reply_and_resolve",
+        approvedTrackedTopLevelEntries: ["README.md", "src"],
+      },
+    }),
+    (error) => {
+      assert.equal((error as { code?: string }).code, "dangerous_confirmation_required");
+      assert.deepEqual((error as { dangerousFields?: string[] }).dangerousFields, [
+        "localReviewFollowUpIssueCreationEnabled",
+        "localReviewHighSeverityAction",
+        "staleConfiguredBotReviewPolicy",
+        "approvedTrackedTopLevelEntries",
+      ]);
+      return true;
+    },
+  );
+
+  assert.equal(await fs.readFile(configPath, "utf8"), before);
+});
+
+test("updateSetupConfig allows idempotent dangerous explicit opt-in resubmits without fresh confirmation", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-dangerous-idempotent-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  await fs.writeFile(
+    configPath,
+    JSON.stringify(
+      {
+        repoPath: ".",
+        repoSlug: "owner/repo",
+        defaultBranch: "main",
+        workspaceRoot: "./worktrees",
+        stateFile: "./state.json",
+        codexBinary: "codex",
+        branchPrefix: "codex/issue-",
+        reviewBotLogins: ["chatgpt-codex-connector"],
+        localReviewFollowUpRepairEnabled: true,
+        localReviewManualReviewRepairEnabled: true,
+        localReviewHighSeverityAction: "retry",
+        staleConfiguredBotReviewPolicy: "reply_only",
+        approvedTrackedTopLevelEntries: ["README.md", "src"],
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+
+  const result = await updateSetupConfig({
+    configPath,
+    changes: {
+      localReviewFollowUpRepairEnabled: true,
+      localReviewManualReviewRepairEnabled: true,
+      localReviewHighSeverityAction: "retry",
+      staleConfiguredBotReviewPolicy: "reply_only",
+      approvedTrackedTopLevelEntries: ["README.md", "src"],
+    },
+  });
+
+  assert.deepEqual(result.updatedFields, [
+    "localReviewFollowUpRepairEnabled",
+    "localReviewManualReviewRepairEnabled",
+    "localReviewHighSeverityAction",
+    "staleConfiguredBotReviewPolicy",
+    "approvedTrackedTopLevelEntries",
+  ]);
+  assert.equal(result.restartRequired, false);
+  assert.deepEqual(result.restartTriggeredByFields, []);
+});
+
+test("updateSetupConfig writes confirmed dangerous explicit opt-ins through the setup-owned surface", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-dangerous-write-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  await fs.writeFile(
+    configPath,
+    JSON.stringify(
+      {
+        repoPath: ".",
+        repoSlug: "owner/repo",
+        defaultBranch: "main",
+        workspaceRoot: "./worktrees",
+        stateFile: "./state.json",
+        codexBinary: "codex",
+        branchPrefix: "codex/issue-",
+        reviewBotLogins: ["chatgpt-codex-connector"],
+        experimentalFlag: true,
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+
+  const result = await updateSetupConfig({
+    configPath,
+    changes: {
+      localReviewFollowUpRepairEnabled: true,
+      localReviewManualReviewRepairEnabled: true,
+      localReviewFollowUpIssueCreationEnabled: true,
+      localReviewHighSeverityAction: "retry",
+      staleConfiguredBotReviewPolicy: "reply_only",
+      approvedTrackedTopLevelEntries: ["README.md", "src"],
+    },
+    dangerousOptInConfirmation: {
+      acknowledged: true,
+      fieldKeys: [
+        "localReviewFollowUpRepairEnabled",
+        "localReviewManualReviewRepairEnabled",
+        "localReviewFollowUpIssueCreationEnabled",
+        "localReviewHighSeverityAction",
+        "staleConfiguredBotReviewPolicy",
+        "approvedTrackedTopLevelEntries",
+      ],
+    },
+  });
+
+  const updatedDocument = JSON.parse(await fs.readFile(configPath, "utf8")) as Record<string, unknown>;
+  assert.deepEqual(result.updatedFields, [
+    "localReviewFollowUpRepairEnabled",
+    "localReviewManualReviewRepairEnabled",
+    "localReviewFollowUpIssueCreationEnabled",
+    "localReviewHighSeverityAction",
+    "staleConfiguredBotReviewPolicy",
+    "approvedTrackedTopLevelEntries",
+  ]);
+  assert.equal(result.restartRequired, true);
+  assert.deepEqual(result.restartTriggeredByFields, result.updatedFields);
+  assert.equal(updatedDocument.localReviewFollowUpRepairEnabled, true);
+  assert.equal(updatedDocument.localReviewManualReviewRepairEnabled, true);
+  assert.equal(updatedDocument.localReviewFollowUpIssueCreationEnabled, true);
+  assert.equal(updatedDocument.localReviewHighSeverityAction, "retry");
+  assert.equal(updatedDocument.staleConfiguredBotReviewPolicy, "reply_only");
+  assert.deepEqual(updatedDocument.approvedTrackedTopLevelEntries, ["README.md", "src"]);
+  assert.equal(updatedDocument.experimentalFlag, true);
+});
+
+test("updateSetupConfig preserves unrelated fields, writes a backup, and refreshes readiness", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-update-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  await fs.writeFile(
+    configPath,
+    JSON.stringify(
+      {
+        repoPath: ".",
+        repoSlug: "owner/repo",
+        defaultBranch: "main",
+        workspaceRoot: "./worktrees",
+        stateFile: "./state.json",
+        codexBinary: "codex",
+        branchPrefix: "codex/issue-",
+        reviewBotLogins: [],
+        experimentalFlag: {
+          keep: true,
+        },
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+
+  const result = await updateSetupConfig({
+    configPath,
+    changes: {
+      reviewProvider: "codex",
+    },
+  });
+
+  const updatedDocument = JSON.parse(await fs.readFile(configPath, "utf8")) as Record<string, unknown>;
+  assert.ok(result.backupPath, "Expected backupPath to be set when updating an existing config");
+  const backupDocument = JSON.parse(await fs.readFile(result.backupPath, "utf8")) as Record<string, unknown>;
+
+  assert.deepEqual(result.updatedFields, ["reviewProvider"]);
+  assert.equal(result.restartRequired, true);
+  assert.equal(result.restartScope, "supervisor");
+  assert.deepEqual(result.restartTriggeredByFields, ["reviewProvider"]);
+  assert.deepEqual(updatedDocument.reviewBotLogins, ["chatgpt-codex-connector"]);
+  assert.deepEqual(updatedDocument.experimentalFlag, { keep: true });
+  assert.deepEqual(backupDocument.reviewBotLogins, []);
+  assert.deepEqual(backupDocument.experimentalFlag, { keep: true });
+  assert.equal(result.readiness.kind, "setup_readiness");
+  assert.equal(result.readiness.providerPosture.profile, "codex");
+});
+
+test("updateSetupConfig rotates multiple backups across consecutive writes with bounded retention", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-update-rotate-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  await fs.writeFile(
+    configPath,
+    JSON.stringify(
+      {
+        repoPath: ".",
+        repoSlug: "owner/repo",
+        defaultBranch: "main",
+        workspaceRoot: "./worktrees",
+        stateFile: "./state.json",
+        codexBinary: "codex",
+        branchPrefix: "codex/issue-",
+        reviewBotLogins: [],
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+
+  const firstResult = await updateSetupConfig({
+    configPath,
+    changes: {
+      reviewProvider: "codex",
+    },
+  });
+  const secondResult = await updateSetupConfig({
+    configPath,
+    changes: {
+      branchPrefix: "codex/task-",
+    },
+  });
+  for (let index = 0; index < 6; index += 1) {
+    await updateSetupConfig({
+      configPath,
+      changes: {
+        defaultBranch: `main-${index}`,
+      },
+    });
+  }
+
+  assert.ok(firstResult.backupPath);
+  assert.ok(secondResult.backupPath);
+  assert.equal(firstResult.backupPath, secondResult.backupPath);
+
+  const backupPaths = (await fs.readdir(tempDir))
+    .filter((entry) => entry.startsWith("supervisor.config.json.bak"))
+    .sort()
+    .map((entry) => path.join(tempDir, entry));
+
+  assert.deepEqual(backupPaths, [
+    path.join(tempDir, "supervisor.config.json.bak"),
+    path.join(tempDir, "supervisor.config.json.bak.1"),
+    path.join(tempDir, "supervisor.config.json.bak.2"),
+    path.join(tempDir, "supervisor.config.json.bak.3"),
+    path.join(tempDir, "supervisor.config.json.bak.4"),
+  ]);
+
+  const secondBackupDocument = JSON.parse(await fs.readFile(secondResult.backupPath, "utf8")) as Record<string, unknown>;
+  const oldestRetainedBackup = JSON.parse(
+    await fs.readFile(path.join(tempDir, "supervisor.config.json.bak.4"), "utf8"),
+  ) as Record<string, unknown>;
+
+  assert.deepEqual(secondBackupDocument.reviewBotLogins, ["chatgpt-codex-connector"]);
+  assert.equal(secondBackupDocument.defaultBranch, "main-4");
+  assert.equal(oldestRetainedBackup.defaultBranch, "main-0");
+});
+
+test("updateSetupConfig reports no restart requirement when a typed setup write is a no-op", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-update-noop-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  await fs.writeFile(
+    configPath,
+    JSON.stringify(
+      {
+        repoPath: ".",
+        repoSlug: "owner/repo",
+        defaultBranch: "main",
+        workspaceRoot: "./worktrees",
+        stateFile: "./state.json",
+        codexBinary: "codex",
+        branchPrefix: "codex/issue-",
+        reviewBotLogins: ["chatgpt-codex-connector"],
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+
+  const result = await updateSetupConfig({
+    configPath,
+    changes: {
+      reviewProvider: "codex",
+    },
+  });
+
+  assert.deepEqual(result.updatedFields, ["reviewProvider"]);
+  assert.equal(result.restartRequired, false);
+  assert.equal(result.restartScope, null);
+  assert.deepEqual(result.restartTriggeredByFields, []);
+  assert.equal(result.readiness.kind, "setup_readiness");
+  assert.equal(result.readiness.providerPosture.profile, "codex");
+});
+
+test("updateSetupConfig accepts localCiCommand through the setup-owned write surface", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-update-local-ci-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  const repoPath = path.join(tempDir, "repo");
+  await fs.mkdir(repoPath, { recursive: true });
+  await fs.writeFile(
+    path.join(repoPath, "package.json"),
+    JSON.stringify({
+      scripts: {
+        "verify:pre-pr": "npm test",
+      },
+    }),
+    "utf8",
+  );
+  await fs.writeFile(
+    configPath,
+    JSON.stringify(
+      {
+        repoPath,
+        repoSlug: "owner/repo",
+        defaultBranch: "main",
+        workspaceRoot: path.join(tempDir, "worktrees"),
+        stateFile: path.join(tempDir, "state.json"),
+        codexBinary: process.execPath,
+        branchPrefix: "codex/issue-",
+        reviewBotLogins: ["chatgpt-codex-connector"],
+        experimentalFlag: true,
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+
+  const result = await updateSetupConfig({
+    configPath,
+    changes: {
+      localCiCommand: "npm run verify:pre-pr",
+    },
+  });
+
+  const updatedDocument = JSON.parse(await fs.readFile(configPath, "utf8")) as Record<string, unknown>;
+  assert.deepEqual(result.updatedFields, ["localCiCommand"]);
+  assert.equal(result.restartRequired, true);
+  assert.equal(result.restartScope, "supervisor");
+  assert.deepEqual(result.restartTriggeredByFields, ["localCiCommand"]);
+  assert.equal(updatedDocument.localCiCommand, "npm run verify:pre-pr");
+  assert.equal(updatedDocument.experimentalFlag, true);
+  assert.deepEqual(result.readiness.localCiContract, {
+    configured: true,
+    command: "npm run verify:pre-pr",
+    recommendedCommand: null,
+    source: "config",
+    summary: "Repo-owned local CI contract is configured.",
+    warning:
+      "localCiCommand is configured but workspacePreparationCommand is unset. Configure a repo-owned workspacePreparationCommand so preserved issue worktrees can prepare toolchains before host-local CI runs. GitHub checks can stay green while host-local CI still blocks tracked PR progress.",
+    adoptionFlow: {
+      state: "configured",
+      candidateDetected: true,
+      commandPreview: "npm run verify:pre-pr",
+      validationStatus: "configured",
+      workspacePreparationCommand: null,
+      workspacePreparationRecommendedCommand: null,
+      workspacePreparationGuidance:
+        "workspacePreparationCommand is unset; confirm preserved issue worktrees can prepare required toolchains before adopting local CI.",
+      decisions: [],
+    },
+  });
+});
+
+test("updateSetupConfig accepts trust posture through the setup-owned write surface", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-update-trust-posture-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  await fs.writeFile(
+    configPath,
+    JSON.stringify(
+      {
+        repoPath: ".",
+        repoSlug: "owner/repo",
+        defaultBranch: "main",
+        workspaceRoot: "./worktrees",
+        stateFile: "./state.json",
+        codexBinary: process.execPath,
+        branchPrefix: "codex/issue-",
+        reviewBotLogins: ["chatgpt-codex-connector"],
+        experimentalFlag: true,
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+
+  const result = await updateSetupConfig({
+    configPath,
+    changes: {
+      trustMode: "untrusted_or_mixed",
+      executionSafetyMode: "operator_gated",
+    },
+  });
+
+  const updatedDocument = JSON.parse(await fs.readFile(configPath, "utf8")) as Record<string, unknown>;
+  assert.deepEqual(result.updatedFields, ["trustMode", "executionSafetyMode"]);
+  assert.equal(result.restartRequired, true);
+  assert.equal(result.restartScope, "supervisor");
+  assert.deepEqual(result.restartTriggeredByFields, ["trustMode", "executionSafetyMode"]);
+  assert.equal(updatedDocument.trustMode, "untrusted_or_mixed");
+  assert.equal(updatedDocument.executionSafetyMode, "operator_gated");
+  assert.equal(updatedDocument.experimentalFlag, true);
+  assert.equal(result.readiness.trustPosture.configured, true);
+  assert.equal(result.readiness.trustPosture.warning, null);
+});
+
+test("updateSetupConfig restart detection treats trust posture values as exact enums", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-update-trust-posture-exact-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  await fs.writeFile(
+    configPath,
+    JSON.stringify(
+      {
+        repoPath: ".",
+        repoSlug: "owner/repo",
+        defaultBranch: "main",
+        workspaceRoot: "./worktrees",
+        stateFile: "./state.json",
+        codexBinary: process.execPath,
+        branchPrefix: "codex/issue-",
+        reviewBotLogins: ["chatgpt-codex-connector"],
+        trustMode: " untrusted_or_mixed ",
+        executionSafetyMode: " operator_gated ",
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+
+  const result = await updateSetupConfig({
+    configPath,
+    changes: {
+      trustMode: "untrusted_or_mixed",
+      executionSafetyMode: "operator_gated",
+    },
+  });
+
+  const updatedDocument = JSON.parse(await fs.readFile(configPath, "utf8")) as Record<string, unknown>;
+  assert.deepEqual(result.updatedFields, ["trustMode", "executionSafetyMode"]);
+  assert.equal(result.restartRequired, true);
+  assert.deepEqual(result.restartTriggeredByFields, ["trustMode", "executionSafetyMode"]);
+  assert.equal(updatedDocument.trustMode, "untrusted_or_mixed");
+  assert.equal(updatedDocument.executionSafetyMode, "operator_gated");
+});
+
+test("updateSetupConfig clears localCiCommand back to the unset state", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-update-local-ci-clear-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  const repoPath = path.join(tempDir, "repo");
+  await fs.mkdir(repoPath, { recursive: true });
+  await fs.writeFile(
+    path.join(repoPath, "package.json"),
+    JSON.stringify({
+      scripts: {
+        "verify:pre-pr": "npm test",
+      },
+    }),
+    "utf8",
+  );
+  await fs.writeFile(
+    configPath,
+    JSON.stringify(
+      {
+        repoPath,
+        repoSlug: "owner/repo",
+        defaultBranch: "main",
+        workspaceRoot: path.join(tempDir, "worktrees"),
+        stateFile: path.join(tempDir, "state.json"),
+        codexBinary: process.execPath,
+        branchPrefix: "codex/issue-",
+        reviewBotLogins: ["chatgpt-codex-connector"],
+        localCiCommand: "npm run ci:local",
+        experimentalFlag: true,
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+
+  const result = await updateSetupConfig({
+    configPath,
+    changes: {
+      localCiCommand: null,
+    },
+  });
+
+  const updatedDocument = JSON.parse(await fs.readFile(configPath, "utf8")) as Record<string, unknown>;
+  assert.ok(!("localCiCommand" in updatedDocument));
+  assert.equal(updatedDocument.experimentalFlag, true);
+  assert.deepEqual(result.updatedFields, ["localCiCommand"]);
+  assert.equal(result.restartRequired, true);
+  assert.equal(result.restartScope, "supervisor");
+  assert.deepEqual(result.restartTriggeredByFields, ["localCiCommand"]);
+  assert.deepEqual(result.readiness.localCiContract, {
+    configured: false,
+    command: null,
+    recommendedCommand: "npm run verify:pre-pr",
+    source: "repo_script_candidate",
+    summary: "Repo-owned local CI candidate exists but localCiCommand is unset. Recommended command: npm run verify:pre-pr.",
+    warning: null,
+    adoptionFlow: {
+      state: "candidate_detected",
+      candidateDetected: true,
+      commandPreview: "npm run verify:pre-pr",
+      validationStatus: "not_run",
+      workspacePreparationCommand: null,
+      workspacePreparationRecommendedCommand: null,
+      workspacePreparationGuidance:
+        "workspacePreparationCommand is unset; confirm preserved issue worktrees can prepare required toolchains before adopting local CI.",
+      decisions: [
+        {
+          kind: "adopt",
+          enabled: true,
+          summary: "Save npm run verify:pre-pr as localCiCommand.",
+          writes: ["localCiCommand"],
+        },
+        {
+          kind: "dismiss",
+          enabled: true,
+          summary: "Record localCiCandidateDismissed=true without changing an already configured localCiCommand.",
+          writes: ["localCiCandidateDismissed"],
+        },
+      ],
+    },
+  });
+});
+
+test("updateSetupConfig records an explicit local CI candidate dismissal", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-dismiss-local-ci-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  const repoPath = path.join(tempDir, "repo");
+  await fs.mkdir(repoPath, { recursive: true });
+  await fs.writeFile(
+    path.join(repoPath, "package.json"),
+    JSON.stringify({
+      scripts: {
+        "verify:pre-pr": "npm test",
+      },
+    }),
+    "utf8",
+  );
+  await fs.writeFile(
+    configPath,
+    JSON.stringify(
+      {
+        repoPath,
+        repoSlug: "owner/repo",
+        defaultBranch: "main",
+        workspaceRoot: path.join(tempDir, "worktrees"),
+        stateFile: path.join(tempDir, "state.json"),
+        codexBinary: process.execPath,
+        branchPrefix: "codex/issue-",
+        reviewBotLogins: ["chatgpt-codex-connector"],
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+
+  const result = await updateSetupConfig({
+    configPath,
+    changes: {
+      localCiCandidateDismissed: true,
+    },
+  });
+
+  const updatedDocument = JSON.parse(await fs.readFile(configPath, "utf8")) as Record<string, unknown>;
+  assert.equal(updatedDocument.localCiCandidateDismissed, true);
+  assert.deepEqual(result.updatedFields, ["localCiCandidateDismissed"]);
+  assert.deepEqual(result.restartTriggeredByFields, ["localCiCandidateDismissed"]);
+  assert.deepEqual(result.readiness.localCiContract, {
+    configured: false,
+    command: null,
+    recommendedCommand: "npm run verify:pre-pr",
+    source: "dismissed_repo_script_candidate",
+    summary:
+      "Repo-owned local CI candidate was intentionally dismissed; localCiCommand remains unset and non-blocking. Dismissed candidate: npm run verify:pre-pr.",
+    warning: null,
+    adoptionFlow: {
+      state: "dismissed",
+      candidateDetected: true,
+      commandPreview: "npm run verify:pre-pr",
+      validationStatus: "dismissed",
+      workspacePreparationCommand: null,
+      workspacePreparationRecommendedCommand: null,
+      workspacePreparationGuidance:
+        "workspacePreparationCommand is unset; confirm preserved issue worktrees can prepare required toolchains before adopting local CI.",
+      decisions: [],
+    },
+  });
+});
+
+test("updateSetupConfig rejects conflicting local CI adoption and dismissal before touching the config file", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-local-ci-conflict-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  const originalDocument = {
+    repoPath: ".",
+    repoSlug: "owner/repo",
+    defaultBranch: "main",
+    workspaceRoot: "./worktrees",
+    stateFile: "./state.json",
+    codexBinary: process.execPath,
+    branchPrefix: "codex/issue-",
+    reviewBotLogins: ["chatgpt-codex-connector"],
+    experimentalFlag: true,
+  };
+  await fs.writeFile(configPath, JSON.stringify(originalDocument, null, 2), "utf8");
+  const before = await fs.readFile(configPath, "utf8");
+
+  await assert.rejects(
+    () =>
+      updateSetupConfig({
+        configPath,
+        changes: {
+          localCiCommand: "npm run verify:pre-pr",
+          localCiCandidateDismissed: true,
+        },
+      }),
+    /localCiCommand and localCiCandidateDismissed=true cannot be set in the same update\./u,
+  );
+
+  const after = await fs.readFile(configPath, "utf8");
+  assert.equal(after, before);
+  await assert.rejects(fs.access(`${configPath}.bak`));
+});
+
+test("updateSetupConfig reports restart when dismissal resolves a malformed configured local CI state", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-local-ci-effective-dismiss-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  const repoPath = path.join(tempDir, "repo");
+  await fs.mkdir(repoPath, { recursive: true });
+  await fs.writeFile(
+    path.join(repoPath, "package.json"),
+    JSON.stringify({
+      scripts: {
+        "verify:pre-pr": "npm test",
+      },
+    }),
+    "utf8",
+  );
+  await fs.writeFile(
+    configPath,
+    JSON.stringify(
+      {
+        repoPath,
+        repoSlug: "owner/repo",
+        defaultBranch: "main",
+        workspaceRoot: path.join(tempDir, "worktrees"),
+        stateFile: path.join(tempDir, "state.json"),
+        codexBinary: process.execPath,
+        branchPrefix: "codex/issue-",
+        reviewBotLogins: ["chatgpt-codex-connector"],
+        localCiCommand: "npm run ci:local",
+        localCiCandidateDismissed: true,
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+
+  const result = await updateSetupConfig({
+    configPath,
+    changes: {
+      localCiCandidateDismissed: true,
+    },
+  });
+
+  const updatedDocument = JSON.parse(await fs.readFile(configPath, "utf8")) as Record<string, unknown>;
+  assert.ok(!("localCiCommand" in updatedDocument));
+  assert.equal(updatedDocument.localCiCandidateDismissed, true);
+  assert.equal(result.restartRequired, true);
+  assert.equal(result.restartScope, "supervisor");
+  assert.deepEqual(result.restartTriggeredByFields, ["localCiCandidateDismissed"]);
+  assert.deepEqual(result.readiness.localCiContract, {
+    configured: false,
+    command: null,
+    recommendedCommand: "npm run verify:pre-pr",
+    source: "dismissed_repo_script_candidate",
+    summary:
+      "Repo-owned local CI candidate was intentionally dismissed; localCiCommand remains unset and non-blocking. Dismissed candidate: npm run verify:pre-pr.",
+    warning: null,
+    adoptionFlow: {
+      state: "dismissed",
+      candidateDetected: true,
+      commandPreview: "npm run verify:pre-pr",
+      validationStatus: "dismissed",
+      workspacePreparationCommand: null,
+      workspacePreparationRecommendedCommand: null,
+      workspacePreparationGuidance:
+        "workspacePreparationCommand is unset; confirm preserved issue worktrees can prepare required toolchains before adopting local CI.",
+      decisions: [],
+    },
+  });
+});
+
+test("updateSetupConfig rejects invalid setup field values before touching the config file", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-update-invalid-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  const originalDocument = {
+    repoPath: ".",
+    repoSlug: "owner/repo",
+    defaultBranch: "main",
+    workspaceRoot: "./worktrees",
+    stateFile: "./state.json",
+    codexBinary: "codex",
+    branchPrefix: "codex/issue-",
+    reviewBotLogins: [],
+    experimentalFlag: true,
+  };
+  await fs.writeFile(configPath, JSON.stringify(originalDocument, null, 2), "utf8");
+  const before = await fs.readFile(configPath, "utf8");
+
+  await assert.rejects(
+    () =>
+      updateSetupConfig({
+        configPath,
+        changes: {
+          repoSlug: "not-a-slug",
+        },
+      }),
+    /repoSlug must use owner\/repo format\./u,
+  );
+
+  const after = await fs.readFile(configPath, "utf8");
+  assert.equal(after, before);
+  await assert.rejects(fs.access(`${configPath}.bak`));
+});
+
+test("updateSetupConfig rejects missing repo-relative workspacePreparationCommand helpers before touching the config file", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-update-workspace-prep-missing-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const repoPath = path.join(tempDir, "repo");
+  await fs.mkdir(repoPath, { recursive: true });
+  initGitRepo(repoPath);
+
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  const originalDocument = {
+    repoPath,
+    repoSlug: "owner/repo",
+    defaultBranch: "main",
+    workspaceRoot: path.join(tempDir, "worktrees"),
+    stateFile: path.join(tempDir, "state.json"),
+    codexBinary: process.execPath,
+    branchPrefix: "codex/issue-",
+    reviewBotLogins: [],
+    experimentalFlag: true,
+  };
+  await fs.writeFile(configPath, JSON.stringify(originalDocument, null, 2), "utf8");
+  const before = await fs.readFile(configPath, "utf8");
+
+  await assert.rejects(
+    () =>
+      updateSetupConfig({
+        configPath,
+        changes: {
+          workspacePreparationCommand: "./scripts/prepare-workspace.sh",
+        },
+      }),
+    /workspacePreparationCommand points at \.\/scripts\/prepare-workspace\.sh, but that path does not resolve to a file inside repoPath\./u,
+  );
+
+  const after = await fs.readFile(configPath, "utf8");
+  assert.equal(after, before);
+  await assert.rejects(fs.access(`${configPath}.bak`));
+});
+
+test("updateSetupConfig rejects untracked repo-relative workspacePreparationCommand helpers before touching the config file", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-update-workspace-prep-untracked-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const repoPath = path.join(tempDir, "repo");
+  await fs.mkdir(path.join(repoPath, "scripts"), { recursive: true });
+  initGitRepo(repoPath);
+  await fs.writeFile(path.join(repoPath, "scripts", "prepare-workspace.sh"), "#!/bin/sh\nexit 0\n", "utf8");
+
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  const originalDocument = {
+    repoPath,
+    repoSlug: "owner/repo",
+    defaultBranch: "main",
+    workspaceRoot: path.join(tempDir, "worktrees"),
+    stateFile: path.join(tempDir, "state.json"),
+    codexBinary: process.execPath,
+    branchPrefix: "codex/issue-",
+    reviewBotLogins: [],
+    experimentalFlag: true,
+  };
+  await fs.writeFile(configPath, JSON.stringify(originalDocument, null, 2), "utf8");
+  const before = await fs.readFile(configPath, "utf8");
+
+  await assert.rejects(
+    () =>
+      updateSetupConfig({
+        configPath,
+        changes: {
+          workspacePreparationCommand: "./scripts/prepare-workspace.sh",
+        },
+      }),
+    /workspacePreparationCommand points at \.\/scripts\/prepare-workspace\.sh, but that path resolves to an untracked helper\./u,
+  );
+
+  const after = await fs.readFile(configPath, "utf8");
+  assert.equal(after, before);
+  await assert.rejects(fs.access(`${configPath}.bak`));
+});
+
+test("updateSetupConfig accepts tracked repo-owned workspacePreparationCommand helpers", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-update-workspace-prep-tracked-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const repoPath = path.join(tempDir, "repo");
+  await fs.mkdir(path.join(repoPath, "scripts"), { recursive: true });
+  initGitRepo(repoPath);
+  await fs.writeFile(path.join(repoPath, "scripts", "prepare-workspace.sh"), "#!/bin/sh\nexit 0\n", "utf8");
+  execFileSync("git", ["add", "scripts/prepare-workspace.sh"], { cwd: repoPath, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", "Add workspace helper"], { cwd: repoPath, stdio: "ignore" });
+
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath,
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: path.join(tempDir, "worktrees"),
+      stateFile: path.join(tempDir, "state.json"),
+      codexBinary: process.execPath,
+      branchPrefix: "codex/issue-",
+      reviewBotLogins: [],
+      experimentalFlag: true,
+    }, null, 2),
+    "utf8",
+  );
+
+  const result = await updateSetupConfig({
+    configPath,
+    changes: {
+      workspacePreparationCommand: "./scripts/prepare-workspace.sh",
+    },
+  });
+
+  const updatedDocument = JSON.parse(await fs.readFile(configPath, "utf8")) as Record<string, unknown>;
+  const workspacePreparationField = result.readiness.fields.find((field) => field.key === "workspacePreparationCommand");
+  assert.equal(updatedDocument.workspacePreparationCommand, "./scripts/prepare-workspace.sh");
+  assert.equal(updatedDocument.experimentalFlag, true);
+  assert.deepEqual(result.updatedFields, ["workspacePreparationCommand"]);
+  assert.ok(workspacePreparationField);
+  assert.equal(workspacePreparationField.state, "configured");
+  assert.equal(workspacePreparationField.value, "./scripts/prepare-workspace.sh");
+  assert.equal(workspacePreparationField.message, "Workspace preparation command is configured.");
+});
+
+test("updateSetupConfig accepts non-file workspacePreparationCommand probes", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-update-workspace-prep-probe-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const repoPath = path.join(tempDir, "repo");
+  await fs.mkdir(repoPath, { recursive: true });
+  initGitRepo(repoPath);
+
+  const configPath = path.join(tempDir, "supervisor.config.json");
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath,
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: path.join(tempDir, "worktrees"),
+      stateFile: path.join(tempDir, "state.json"),
+      codexBinary: process.execPath,
+      branchPrefix: "codex/issue-",
+      reviewBotLogins: [],
+    }, null, 2),
+    "utf8",
+  );
+
+  const result = await updateSetupConfig({
+    configPath,
+    changes: {
+      workspacePreparationCommand: "node --version",
+    },
+  });
+
+  const updatedDocument = JSON.parse(await fs.readFile(configPath, "utf8")) as Record<string, unknown>;
+  const workspacePreparationField = result.readiness.fields.find((field) => field.key === "workspacePreparationCommand");
+  assert.equal(updatedDocument.workspacePreparationCommand, "node --version");
+  assert.deepEqual(result.updatedFields, ["workspacePreparationCommand"]);
+  assert.ok(workspacePreparationField);
+  assert.equal(workspacePreparationField.state, "configured");
+  assert.equal(workspacePreparationField.value, "node --version");
+  assert.equal(workspacePreparationField.message, "Workspace preparation command is configured.");
+});

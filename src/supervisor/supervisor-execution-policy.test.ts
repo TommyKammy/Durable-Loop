@@ -1,0 +1,506 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  attemptBudgetForLane,
+  attemptLane,
+  attemptsUsedForLane,
+  addressingReviewStrategyPatch,
+  hasAttemptBudgetRemaining,
+  incrementAttemptCounters,
+  isEligibleForSelection,
+  isVerificationBlockedMessage,
+  shouldAutoRecoverStaleReviewBot,
+  shouldReconcileTrackedPrStaleReviewBot,
+  shouldAutoRetryBlockedVerification,
+  shouldAutoRetryHandoffMissing,
+  shouldEnforceExecutionReady,
+} from "./supervisor-execution-policy";
+import { GitHubPullRequest, IssueRunRecord, SupervisorConfig } from "../core/types";
+
+function createConfig(overrides: Partial<SupervisorConfig> = {}): SupervisorConfig {
+  return {
+    repoPath: "/tmp/repo",
+    repoSlug: "owner/repo",
+    defaultBranch: "main",
+    workspaceRoot: "/tmp/workspaces",
+    stateBackend: "json",
+    stateFile: "/tmp/state.json",
+    codexBinary: "/usr/bin/codex",
+    codexModelStrategy: "inherit",
+    codexReasoningEffortByState: {},
+    codexReasoningEscalateOnRepeatedFailure: true,
+    localReviewModelStrategy: undefined,
+    localReviewModel: undefined,
+    sharedMemoryFiles: [],
+    gsdEnabled: false,
+    gsdAutoInstall: false,
+    gsdInstallScope: "global",
+    gsdPlanningFiles: [],
+    localReviewEnabled: false,
+    localReviewAutoDetect: true,
+    localReviewRoles: [],
+    localReviewArtifactDir: "/tmp/reviews",
+    localReviewConfidenceThreshold: 0.7,
+    localReviewReviewerThresholds: {
+      generic: {
+        confidenceThreshold: 0.7,
+        minimumSeverity: "low",
+      },
+      specialist: {
+        confidenceThreshold: 0.7,
+        minimumSeverity: "low",
+      },
+    },
+    localReviewPolicy: "block_ready",
+    localReviewHighSeverityAction: "retry",
+    reviewBotLogins: [],
+    humanReviewBlocksMerge: true,
+    issueJournalRelativePath: ".codex-supervisor/issue-journal.md",
+    issueJournalMaxChars: 6000,
+    skipTitlePrefixes: [],
+    branchPrefix: "codex/reopen-issue-",
+    pollIntervalSeconds: 60,
+    copilotReviewWaitMinutes: 10,
+    copilotReviewTimeoutAction: "continue",
+    codexExecTimeoutMinutes: 30,
+    maxCodexAttemptsPerIssue: 5,
+    maxImplementationAttemptsPerIssue: 3,
+    maxRepairAttemptsPerIssue: 7,
+    timeoutRetryLimit: 2,
+    blockedVerificationRetryLimit: 3,
+    sameBlockerRepeatLimit: 2,
+    sameFailureSignatureRepeatLimit: 3,
+    maxDoneWorkspaces: 24,
+    cleanupDoneWorkspacesAfterHours: 24,
+    mergeMethod: "squash",
+    draftPrAfterAttempt: 1,
+    ...overrides,
+  };
+}
+
+function createRecord(overrides: Partial<IssueRunRecord> = {}): IssueRunRecord {
+  return {
+    issue_number: 366,
+    state: "blocked",
+    branch: "codex/reopen-issue-366",
+    pr_number: null,
+    workspace: "/tmp/workspaces/issue-366",
+    journal_path: "/tmp/workspaces/issue-366/.codex-supervisor/issue-journal.md",
+    review_wait_started_at: null,
+    review_wait_head_sha: null,
+    copilot_review_requested_observed_at: null,
+    copilot_review_requested_head_sha: null,
+    copilot_review_timed_out_at: null,
+    copilot_review_timeout_action: null,
+    copilot_review_timeout_reason: null,
+    codex_session_id: "session-1",
+    local_review_head_sha: null,
+    local_review_blocker_summary: null,
+    local_review_summary_path: null,
+    local_review_run_at: null,
+    local_review_max_severity: null,
+    local_review_findings_count: 0,
+    local_review_root_cause_count: 0,
+    local_review_verified_max_severity: null,
+    local_review_verified_findings_count: 0,
+    local_review_recommendation: null,
+    local_review_degraded: false,
+    last_local_review_signature: null,
+    repeated_local_review_signature_count: 0,
+    external_review_head_sha: null,
+    external_review_misses_path: null,
+    external_review_matched_findings_count: 0,
+    external_review_near_match_findings_count: 0,
+    external_review_missed_findings_count: 0,
+    attempt_count: 2,
+    implementation_attempt_count: 2,
+    repair_attempt_count: 0,
+    timeout_retry_count: 0,
+    blocked_verification_retry_count: 0,
+    repeated_blocker_count: 0,
+    repeated_failure_signature_count: 1,
+    last_head_sha: "abcdef1",
+    last_codex_summary: null,
+    last_recovery_reason: null,
+    last_recovery_at: null,
+    last_error: "Codex completed without updating the issue journal for issue #366.",
+    last_failure_kind: null,
+    last_failure_context: null,
+    last_blocker_signature: null,
+    last_failure_signature: "handoff-missing",
+    blocked_reason: "handoff_missing",
+    processed_review_thread_ids: [],
+    processed_review_thread_fingerprints: [],
+    updated_at: "2026-03-11T01:50:41.997Z",
+    ...overrides,
+  };
+}
+
+test("isVerificationBlockedMessage ignores hard blockers even when tests fail", () => {
+  assert.equal(isVerificationBlockedMessage("Playwright test failed because of missing permissions."), false);
+  assert.equal(isVerificationBlockedMessage("Verification still failing in vitest after the patch."), true);
+  assert.equal(isVerificationBlockedMessage("Latest run failed after the patch."), false);
+});
+
+test("shouldAutoRetryBlockedVerification respects implementation budgets and repeat caps", () => {
+  const config = createConfig();
+
+  assert.equal(
+    shouldAutoRetryBlockedVerification(
+      createRecord({
+        last_error: "Verification failed: vitest assertion still failing.",
+        blocked_reason: "verification",
+      }),
+      config,
+    ),
+    true,
+  );
+  assert.equal(
+    shouldAutoRetryBlockedVerification(
+      createRecord({
+        attempt_count: 9,
+        implementation_attempt_count: config.maxImplementationAttemptsPerIssue,
+        repair_attempt_count: 6,
+        last_error: "Verification failed: vitest assertion still failing.",
+        blocked_reason: "verification",
+      }),
+      config,
+    ),
+    false,
+  );
+  assert.equal(
+    shouldAutoRetryBlockedVerification(
+      createRecord({
+        last_error: "Verification failed: vitest assertion still failing.",
+        blocked_reason: "verification",
+        repeated_blocker_count: config.sameBlockerRepeatLimit,
+      }),
+      config,
+    ),
+    false,
+  );
+});
+
+test("attempt helpers split implementation and repair budgets without using total attempts", () => {
+  const config = createConfig();
+  const implementationRecord = createRecord({
+    attempt_count: 8,
+    implementation_attempt_count: 2,
+    repair_attempt_count: 6,
+    pr_number: null,
+  });
+  const repairRecord = createRecord({
+    attempt_count: 8,
+    implementation_attempt_count: 2,
+    repair_attempt_count: 6,
+    pr_number: 42,
+  });
+  const pr = { number: 42 } as GitHubPullRequest;
+
+  assert.equal(attemptLane(implementationRecord, null), "implementation");
+  assert.equal(attemptLane(implementationRecord, pr), "repair");
+  assert.equal(attemptLane(repairRecord, null), "repair");
+  assert.equal(attemptBudgetForLane(config, "implementation"), 3);
+  assert.equal(attemptBudgetForLane(config, "repair"), 7);
+  assert.equal(attemptsUsedForLane(implementationRecord, "implementation"), 2);
+  assert.equal(attemptsUsedForLane(repairRecord, "repair"), 6);
+  assert.equal(hasAttemptBudgetRemaining(implementationRecord, config, "implementation"), true);
+  assert.equal(hasAttemptBudgetRemaining(repairRecord, config, "repair"), true);
+  assert.deepEqual(incrementAttemptCounters(implementationRecord, "implementation"), {
+    attempt_count: 9,
+    implementation_attempt_count: 3,
+    repair_attempt_count: 6,
+  });
+  assert.deepEqual(incrementAttemptCounters(repairRecord, "repair"), {
+    attempt_count: 9,
+    implementation_attempt_count: 2,
+    repair_attempt_count: 7,
+  });
+});
+
+test("addressingReviewStrategyPatch switches repeated review failures to root-cause analysis", () => {
+  assert.deepEqual(
+    addressingReviewStrategyPatch(
+      createRecord({
+        state: "addressing_review",
+        last_failure_signature: "review-thread-cluster-a",
+        repeated_failure_signature_count: 2,
+        last_tracked_pr_progress_summary: "no_meaningful_tracked_pr_progress",
+        last_tracked_pr_repeat_failure_decision: "retry_on_progress",
+      }),
+      "addressing_review",
+    ),
+    {
+      addressing_review_strategy: "root_cause_analysis",
+      addressing_review_strategy_reason:
+        "trigger=repeated_failure_signature; repeated_failure_signature_count=2; signature=review-thread-cluster-a; tracked_pr_progress=no_meaningful_tracked_pr_progress; repeat_decision=retry_on_progress",
+    },
+  );
+
+  assert.deepEqual(
+    addressingReviewStrategyPatch(
+      createRecord({
+        state: "addressing_review",
+        last_head_sha: "head-a",
+        last_failure_signature: "review-thread-cluster-a",
+        repeated_failure_signature_count: 1,
+        last_tracked_pr_progress_summary:
+          "no_progress_review_loop current_unresolved_threads=2 processed_review_threads=2 head=head-a",
+        last_tracked_pr_repeat_failure_decision: "retry_on_progress",
+      }),
+      "addressing_review",
+    ),
+    {
+      addressing_review_strategy: "root_cause_analysis",
+      addressing_review_strategy_reason:
+        "trigger=provider_neutral_review_loop; repeated_failure_signature_count=1; signature=review-thread-cluster-a; tracked_pr_progress=no_progress_review_loop current_unresolved_threads=2 processed_review_threads=2 head=head-a; repeat_decision=retry_on_progress",
+    },
+  );
+
+  assert.deepEqual(
+    addressingReviewStrategyPatch(
+      createRecord({
+        state: "addressing_review",
+        last_head_sha: "head-b",
+        last_failure_signature: "review-thread-cluster-a",
+        repeated_failure_signature_count: 1,
+        last_tracked_pr_progress_summary:
+          "no_progress_review_loop current_unresolved_threads=2 processed_review_threads=2 head=head-a",
+        last_tracked_pr_repeat_failure_decision: "retry_on_progress",
+      }),
+      "addressing_review",
+    ),
+    {
+      addressing_review_strategy: "normal_patch",
+      addressing_review_strategy_reason: null,
+    },
+  );
+
+  assert.deepEqual(
+    addressingReviewStrategyPatch(
+      createRecord({
+        state: "addressing_review",
+        last_failure_signature: "review-thread-cluster-a",
+        repeated_failure_signature_count: 1,
+      }),
+      "addressing_review",
+    ),
+    {
+      addressing_review_strategy: "normal_patch",
+      addressing_review_strategy_reason: null,
+    },
+  );
+
+  assert.deepEqual(addressingReviewStrategyPatch(createRecord(), "repairing_ci"), {
+    addressing_review_strategy: null,
+    addressing_review_strategy_reason: null,
+  });
+});
+
+test("shouldEnforceExecutionReady only gates first implementation attempts without a PR", () => {
+  assert.equal(shouldEnforceExecutionReady(undefined), true);
+  assert.equal(shouldEnforceExecutionReady(null), true);
+  assert.equal(shouldEnforceExecutionReady({ attempt_count: 0, pr_number: null }), true);
+  assert.equal(shouldEnforceExecutionReady({ attempt_count: 1, pr_number: null }), false);
+  assert.equal(shouldEnforceExecutionReady({ attempt_count: 0, pr_number: 12 }), false);
+});
+
+test("isEligibleForSelection retries only terminal states with an allowed retry policy", () => {
+  const config = createConfig();
+
+  assert.equal(isEligibleForSelection(undefined, config), true);
+  assert.equal(isEligibleForSelection(createRecord({ state: "implementing" }), config), true);
+  assert.equal(
+    isEligibleForSelection(
+      createRecord({
+        state: "blocked",
+        blocked_reason: "verification",
+        last_error: "Verification failed: vitest assertion still failing.",
+      }),
+      config,
+    ),
+    true,
+  );
+  assert.equal(
+    isEligibleForSelection(
+      createRecord({
+        state: "blocked",
+        blocked_reason: "verification",
+        last_error: "Missing permissions while playwright test failed.",
+      }),
+      config,
+    ),
+    false,
+  );
+  assert.equal(
+    isEligibleForSelection(
+      createRecord({
+        state: "blocked",
+        blocked_reason: "verification",
+        last_error: "Verification failed: vitest assertion still failing.",
+        blocked_verification_retry_count: config.blockedVerificationRetryLimit,
+      }),
+      config,
+    ),
+    false,
+  );
+  assert.equal(
+    isEligibleForSelection(
+      createRecord({
+        state: "blocked",
+        blocked_reason: "verification",
+        last_error: "Verification failed: vitest assertion still failing.",
+        repeated_failure_signature_count: config.sameFailureSignatureRepeatLimit,
+      }),
+      config,
+    ),
+    false,
+  );
+  assert.equal(
+    isEligibleForSelection(
+      createRecord({
+        state: "blocked",
+        blocked_reason: "stale_review_bot",
+        pr_number: 44,
+      }),
+      config,
+    ),
+    false,
+  );
+  assert.equal(
+    isEligibleForSelection(
+      createRecord({
+        state: "blocked",
+        blocked_reason: "stale_review_bot",
+        pr_number: 44,
+      }),
+      createConfig({ staleConfiguredBotReviewPolicy: "reply_only" }),
+    ),
+    true,
+  );
+  assert.equal(
+    isEligibleForSelection(
+      createRecord({
+        state: "blocked",
+        blocked_reason: "stale_review_bot",
+        pr_number: 44,
+      }),
+      createConfig({ staleConfiguredBotReviewPolicy: "reply_and_resolve" }),
+    ),
+    true,
+  );
+});
+
+test("shouldAutoRetryHandoffMissing only retries recoverable blocked handoffs", () => {
+  const config = createConfig({
+    maxImplementationAttemptsPerIssue: 3,
+    maxRepairAttemptsPerIssue: 9,
+  });
+
+  assert.equal(shouldAutoRetryHandoffMissing(createRecord(), config), true);
+  assert.equal(
+    shouldAutoRetryHandoffMissing(
+      createRecord({
+        attempt_count: 8,
+        implementation_attempt_count: 2,
+        repair_attempt_count: 6,
+      }),
+      config,
+    ),
+    true,
+  );
+  assert.equal(shouldAutoRetryHandoffMissing(createRecord({ pr_number: 12 }), config), false);
+  assert.equal(
+    shouldAutoRetryHandoffMissing(
+      createRecord({ repeated_failure_signature_count: config.sameFailureSignatureRepeatLimit }),
+      config,
+    ),
+    false,
+  );
+  assert.equal(
+    shouldAutoRetryHandoffMissing(
+      createRecord({
+        attempt_count: config.maxImplementationAttemptsPerIssue + 6,
+        implementation_attempt_count: config.maxImplementationAttemptsPerIssue,
+        repair_attempt_count: 6,
+      }),
+      config,
+    ),
+    false,
+  );
+});
+
+test("shouldAutoRecoverStaleReviewBot only reopens tracked PR incidents when the policy enables automatic handling", () => {
+  const record = createRecord({
+    state: "blocked",
+    blocked_reason: "stale_review_bot",
+    pr_number: 44,
+  });
+
+  assert.equal(shouldAutoRecoverStaleReviewBot(record, createConfig()), false);
+  assert.equal(shouldAutoRecoverStaleReviewBot(record, createConfig({ staleConfiguredBotReviewPolicy: "reply_only" })), true);
+  assert.equal(
+    shouldAutoRecoverStaleReviewBot(record, createConfig({ staleConfiguredBotReviewPolicy: "reply_and_resolve" })),
+    true,
+  );
+  assert.equal(shouldAutoRecoverStaleReviewBot(createRecord({ ...record, pr_number: null }), createConfig({
+    staleConfiguredBotReviewPolicy: "reply_and_resolve",
+  })), false);
+});
+
+test("shouldAutoRecoverStaleReviewBot suppresses stale configured-bot recovery after the current head and signature were already handled", () => {
+  const record = createRecord({
+    state: "blocked",
+    blocked_reason: "stale_review_bot",
+    pr_number: 44,
+    last_head_sha: "head-44",
+    last_failure_signature: "stalled-bot:thread-1",
+    last_stale_review_bot_reply_head_sha: "head-44",
+    last_stale_review_bot_reply_signature: "stalled-bot:thread-1",
+  });
+
+  assert.equal(shouldAutoRecoverStaleReviewBot(record, createConfig({ staleConfiguredBotReviewPolicy: "reply_only" })), false);
+  assert.equal(
+    shouldAutoRecoverStaleReviewBot(record, createConfig({ staleConfiguredBotReviewPolicy: "reply_and_resolve" })),
+    false,
+  );
+  assert.equal(shouldAutoRecoverStaleReviewBot(createRecord({
+    ...record,
+    last_stale_review_bot_reply_signature: "stalled-bot:thread-2",
+  }), createConfig({
+    staleConfiguredBotReviewPolicy: "reply_only",
+  })), true);
+  assert.equal(shouldAutoRecoverStaleReviewBot(createRecord({
+    ...record,
+    last_stale_review_bot_reply_head_sha: "head-43",
+  }), createConfig({
+    staleConfiguredBotReviewPolicy: "reply_only",
+  })), true);
+});
+
+test("shouldReconcileTrackedPrStaleReviewBot keeps same-head stale configured-bot records eligible for fresh GitHub reprojection", () => {
+  const record = createRecord({
+    state: "blocked",
+    blocked_reason: "stale_review_bot",
+    pr_number: 44,
+    last_head_sha: "head-44",
+    last_failure_signature: "stalled-bot:thread-1",
+    last_stale_review_bot_reply_head_sha: "head-44",
+    last_stale_review_bot_reply_signature: "stalled-bot:thread-1",
+  });
+
+  assert.equal(
+    shouldReconcileTrackedPrStaleReviewBot(record, createConfig({ staleConfiguredBotReviewPolicy: "reply_and_resolve" })),
+    true,
+  );
+  assert.equal(
+    shouldReconcileTrackedPrStaleReviewBot(record, createConfig({ staleConfiguredBotReviewPolicy: "diagnose_only" })),
+    true,
+  );
+  assert.equal(
+    shouldReconcileTrackedPrStaleReviewBot(createRecord({ ...record, pr_number: null }), createConfig({
+      staleConfiguredBotReviewPolicy: "reply_and_resolve",
+    })),
+    false,
+  );
+});

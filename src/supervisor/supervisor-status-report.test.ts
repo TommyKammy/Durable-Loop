@@ -1,0 +1,323 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { buildSupervisorDashboardWorkflowSteps } from "./supervisor-dashboard-workflow";
+import {
+  buildRuntimeRecoverySummary,
+  renderDecisionKernelV2StatusLine,
+  renderSupervisorStatusDto,
+} from "./supervisor-status-report";
+
+const baseLoopRuntime = {
+  state: "off" as const,
+  hostMode: "unknown" as const,
+  markerPath: "none",
+  configPath: null,
+  stateFile: "none",
+  pid: null,
+  startedAt: null,
+  ownershipConfidence: "none" as const,
+  detail: null,
+};
+
+test("buildSupervisorDashboardWorkflowSteps owns queue workflow state as a server DTO", () => {
+  assert.deepEqual(
+    buildSupervisorDashboardWorkflowSteps({
+      selectedIssueNumber: null,
+      runnableIssueCount: 0,
+      blockedIssueCount: 2,
+      trackedIssueCount: 3,
+      hasCandidateDiscovery: true,
+      reconciliationPhase: "steady",
+    }).map((step) => [step.id, step.state, step.detail]),
+    [
+      ["observe", "done", "Connection and freshness checks keep the workspace current."],
+      ["triage", "done", "3 tracked issues remain in the working set."],
+      ["select", "done", "No runnable issue is currently waiting for handoff."],
+      ["execute", "done", "No active issue is currently executing."],
+      ["recover", "current warn", "No runnable issue is available, so the supervisor is waiting on recovery or unblock work."],
+    ],
+  );
+});
+
+test("buildSupervisorDashboardWorkflowSteps uses neutral recover detail when no blockers are present", () => {
+  const recoverStep = buildSupervisorDashboardWorkflowSteps({
+    selectedIssueNumber: null,
+    runnableIssueCount: 0,
+    blockedIssueCount: 0,
+    trackedIssueCount: 1,
+    hasCandidateDiscovery: false,
+    reconciliationPhase: "steady",
+  }).find((step) => step.id === "recover");
+
+  assert.deepEqual(recoverStep, {
+    id: "recover",
+    title: "Recover",
+    detail: "Recovery remains quiet while no active blockers are reported.",
+    state: "idle",
+  });
+});
+
+test("buildSupervisorDashboardWorkflowSteps rejects invalid selected issue numbers before choosing execute", () => {
+  for (const selectedIssueNumber of [Number.NaN, 0, -7, 1.5]) {
+    const steps = buildSupervisorDashboardWorkflowSteps({
+      selectedIssueNumber,
+      runnableIssueCount: 1,
+      blockedIssueCount: 0,
+      trackedIssueCount: 3,
+      hasCandidateDiscovery: true,
+      reconciliationPhase: "steady",
+    });
+
+    assert.equal(steps.find((step) => step.id === "select")?.state, "current");
+    assert.deepEqual(steps.find((step) => step.id === "execute"), {
+      id: "execute",
+      title: "Execute",
+      detail: "No active issue is currently executing.",
+      state: "idle",
+    });
+  }
+});
+
+test("buildRuntimeRecoverySummary stays quiet when no actionable runtime recovery state exists", () => {
+  assert.equal(
+    buildRuntimeRecoverySummary({
+      loopRuntime: baseLoopRuntime,
+      trackedIssues: [],
+      detailedStatusLines: ["tracked_issues=0"],
+    }),
+    null,
+  );
+});
+
+test("renderDecisionKernelV2StatusLine keeps v2 visibly diagnostic-only", () => {
+  assert.equal(
+    renderDecisionKernelV2StatusLine(),
+    "decision_kernel_v2 mode=diagnostic_only authoritative=false mutation_allowed=false action_source=disabled action_scope=none routing_category=external_orchestration_handoff mutation_authority=none external_handoff=prepare_evidence core_safety_gates=preserved",
+  );
+});
+
+test("renderDecisionKernelV2StatusLine distinguishes disabled and PR lifecycle action-taking modes", () => {
+  assert.equal(
+    renderDecisionKernelV2StatusLine("disabled"),
+    "decision_kernel_v2 mode=disabled authoritative=false mutation_allowed=false action_source=disabled action_scope=none routing_category=external_orchestration_handoff mutation_authority=none external_handoff=prepare_evidence core_safety_gates=preserved",
+  );
+  assert.equal(
+    renderDecisionKernelV2StatusLine("pr_lifecycle_action_taking"),
+    "decision_kernel_v2 mode=pr_lifecycle_action_taking authoritative=true mutation_allowed=true action_source=pr_lifecycle_v2 action_scope=pr_lifecycle routing_category=core_action mutation_authority=core_executor_required external_handoff=none core_safety_gates=preserved",
+  );
+});
+
+test("renderSupervisorStatusDto includes the v2 diagnostic-only guardrail line", () => {
+  const rendered = renderSupervisorStatusDto({
+    gsdSummary: null,
+    candidateDiscovery: null,
+    candidateDiscoverySummary: null,
+    loopRuntime: baseLoopRuntime,
+    activeIssue: null,
+    selectionSummary: null,
+    trackedIssues: [],
+    runnableIssues: [],
+    blockedIssues: [],
+    detailedStatusLines: [],
+    reconciliationPhase: null,
+    reconciliationWarning: null,
+    readinessLines: [],
+    whyLines: [],
+    warning: null,
+  });
+
+  assert.match(
+    rendered,
+    /^decision_kernel_v2 mode=diagnostic_only authoritative=false mutation_allowed=false action_source=disabled action_scope=none routing_category=external_orchestration_handoff mutation_authority=none external_handoff=prepare_evidence core_safety_gates=preserved$/m,
+  );
+});
+
+test("buildRuntimeRecoverySummary stays quiet for quiet no-active tracked records", () => {
+  assert.equal(
+    buildRuntimeRecoverySummary({
+      loopRuntime: baseLoopRuntime,
+      trackedIssues: [
+        {
+          issueNumber: 188,
+          state: "done",
+          branch: "codex/issue-188",
+          prNumber: 288,
+          blockedReason: null,
+        },
+      ],
+      detailedStatusLines: [
+        "no_active_tracked_record issue=#188 classification=safe_to_ignore state=done reason=terminal_done",
+      ],
+    }),
+    null,
+  );
+  assert.equal(
+    buildRuntimeRecoverySummary({
+      loopRuntime: baseLoopRuntime,
+      trackedIssues: [],
+      detailedStatusLines: [
+        "no_active_tracked_record issue=#189 classification=stale_already_handled state=done reason=merged_pr_convergence",
+      ],
+    }),
+    null,
+  );
+});
+
+test("buildRuntimeRecoverySummary reuses restart recommendation vocabulary and classified recovery signals", () => {
+  assert.deepEqual(
+    buildRuntimeRecoverySummary({
+      loopRuntime: {
+        ...baseLoopRuntime,
+        ownershipConfidence: "stale_lock",
+      },
+      trackedIssues: [
+        {
+          issueNumber: 171,
+          state: "blocked",
+          branch: "codex/issue-171",
+          prNumber: 271,
+          blockedReason: "stale_review_bot",
+        },
+      ],
+      detailedStatusLines: [
+        "loop_runtime_blocker issue=#171 reason=recoverable_active_tracked_work_waiting_for_loop expected=loop_runtime_state_running_then_tracked_issue_advances",
+        "stale_review_bot_remediation issue=#171 pr=#271 reason=stale_review_bot classification=metadata_only manual_next_step=inspect_exact_review_thread_then_resolve_or_leave_manual_note",
+        "stale_review_bot_terminal_stop issue=#171 pr=#271 reason=retry_budget_exhausted classification=unknown_needs_operator head_freshness=processed_on_current_head:yes,current_head_success:yes review_thread_classification=unresolved:1,must_fix:1,verified_residue:0 auto_repair_suppressed_reason=repeat_stop_exhausted next_action=manual_review_thread_handling",
+        "no_active_tracked_record issue=#178 classification=repair_already_queued state=repairing_ci reason=repairable_path_hygiene_retry_state",
+      ],
+    }),
+    {
+      loopState: "off",
+      lockConfidence: "stale_lock",
+      trackedRecords: [
+        {
+          issueNumber: 171,
+          state: "blocked",
+          prNumber: 271,
+          blockedReason: "stale_review_bot",
+        },
+      ],
+      signals: [
+        {
+          kind: "loop_runtime_stale_lock",
+          summary: "Loop runtime marker is stale.",
+        },
+        {
+          kind: "stale_review_bot_remediation",
+          summary:
+            "stale_review_bot_remediation issue=#171 pr=#271 reason=stale_review_bot classification=metadata_only manual_next_step=inspect_exact_review_thread_then_resolve_or_leave_manual_note",
+        },
+        {
+          kind: "stale_review_bot_terminal_stop",
+          summary:
+            "stale_review_bot_terminal_stop issue=#171 pr=#271 reason=retry_budget_exhausted classification=unknown_needs_operator head_freshness=processed_on_current_head:yes,current_head_success:yes review_thread_classification=unresolved:1,must_fix:1,verified_residue:0 auto_repair_suppressed_reason=repeat_stop_exhausted next_action=manual_review_thread_handling",
+        },
+        {
+          kind: "repairable_path_hygiene",
+          summary:
+            "no_active_tracked_record issue=#178 classification=repair_already_queued state=repairing_ci reason=repairable_path_hygiene_retry_state",
+        },
+      ],
+      recommendation: {
+        category: "restart_required_for_convergence",
+        source: "loop_runtime_blocker",
+        summary: "Restarting the supported supervisor loop is required before active tracked work can converge.",
+      },
+    },
+  );
+});
+
+test("buildRuntimeRecoverySummary recommends manual review before restarting clustered Codex churn", () => {
+  assert.deepEqual(
+    buildRuntimeRecoverySummary({
+      loopRuntime: baseLoopRuntime,
+      trackedIssues: [
+        {
+          issueNumber: 188,
+          state: "blocked",
+          branch: "codex/issue-188",
+          prNumber: 288,
+          blockedReason: "manual_review",
+        },
+      ],
+      detailedStatusLines: [
+        "loop_runtime_blocker state=off active_tracked_issues=1 first_issue=#188 first_state=blocked first_pr=#288 action=restart_loop restart_reason=recoverable_active_tracked_work_waiting_for_loop expected_outcome=loop_runtime_state_running_then_tracked_issue_advances fallback=if_blocker_remains_run_status_why_and_doctor_then_inspect_runtime_marker_and_config",
+        "codex_connector_review_churn_progress classification=unchanged current_head_sha=head-current-188 previous_head_sha=head-previous-188 current_effective_must_fix=8 previous_effective_must_fix=8 effective_must_fix_delta=0 dominant_file=src/release-readiness.ts previous_dominant_file=src/release-readiness.ts dominant_file_percent=100 cluster_category_signature=truth_source previous_cluster_category_signature=truth_source representative_threads=thread-authority,thread-truth",
+      ],
+    })?.recommendation,
+    {
+      category: "manual_review_before_restart",
+      source: "codex_connector_review_churn_progress",
+      summary:
+        "Clustered Codex Connector churn made no progress; inspect dominant file src/release-readiness.ts with current effective must-fix count 8 before restarting the loop.",
+    },
+  );
+});
+
+test("renderSupervisorStatusDto keeps stopped clustered Codex churn on manual review", () => {
+  const status = renderSupervisorStatusDto({
+    gsdSummary: null,
+    candidateDiscovery: null,
+    candidateDiscoverySummary: null,
+    loopRuntime: baseLoopRuntime,
+    activeIssue: null,
+    selectionSummary: null,
+    trackedIssues: [
+      {
+        issueNumber: 188,
+        state: "blocked",
+        branch: "codex/issue-188",
+        prNumber: 288,
+        blockedReason: "manual_review",
+      },
+    ],
+    runnableIssues: [],
+    blockedIssues: [],
+    detailedStatusLines: [
+      "execution_metrics terminal_state=blocked outcome=blocked reason=manual_review run_duration_ms=3600000 issue_lead_time_ms=4200000 issue_to_pr_created_ms=1200000 pr_open_duration_ms=none",
+      "codex_connector_review_churn_progress classification=unchanged current_head_sha=head-current-188 previous_head_sha=head-previous-188 current_effective_must_fix=8 previous_effective_must_fix=8 effective_must_fix_delta=0 dominant_file=src/release-readiness.ts previous_dominant_file=src/release-readiness.ts dominant_file_percent=100 cluster_category_signature=truth_source previous_cluster_category_signature=truth_source representative_threads=thread-authority,thread-truth",
+    ],
+    reconciliationPhase: null,
+    reconciliationWarning: null,
+    readinessLines: [],
+    whyLines: [
+      "loop_runtime_blocker state=off active_tracked_issues=1 first_issue=#188 first_state=blocked first_pr=#288 action=restart_loop restart_reason=recoverable_active_tracked_work_waiting_for_loop expected_outcome=loop_runtime_state_running_then_tracked_issue_advances fallback=if_blocker_remains_run_status_why_and_doctor_then_inspect_runtime_marker_and_config",
+    ],
+    warning: null,
+  });
+
+  assert.match(
+    status,
+    /^operator_action action=manual_review source=codex_connector_review_churn_progress priority=95 /m,
+  );
+  assert.doesNotMatch(status, /^operator_action action=continue /m);
+});
+
+test("buildRuntimeRecoverySummary ignores historical clustered Codex churn while the loop is active", () => {
+  assert.equal(
+    buildRuntimeRecoverySummary({
+      loopRuntime: {
+        ...baseLoopRuntime,
+        state: "running",
+        hostMode: "tmux",
+        pid: 4242,
+        ownershipConfidence: "live_lock",
+        detail: "running",
+      },
+      trackedIssues: [
+        {
+          issueNumber: 188,
+          state: "addressing_review",
+          branch: "codex/issue-188",
+          prNumber: 288,
+          blockedReason: null,
+        },
+      ],
+      detailedStatusLines: [
+        "loop_runtime state=running host_mode=tmux run_mode=supervisor marker_path=<loop-marker> config_path=<supervisor-config-path> state_file=<state-file> pid=4242 started_at=2026-06-01T06:20:00Z ownership_confidence=live_lock detail=running",
+        "codex_connector_review_churn_progress classification=unchanged current_head_sha=head-current-188 previous_head_sha=head-previous-188 current_effective_must_fix=8 previous_effective_must_fix=8 effective_must_fix_delta=0 dominant_file=src/release-readiness.ts dominant_file_percent=100 cluster_category_signature=truth_source representative_threads=thread-authority,thread-truth",
+      ],
+    }),
+    null,
+  );
+});

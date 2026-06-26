@@ -1,0 +1,795 @@
+import fsSync from "node:fs";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { GitHubIssue, IssueRunRecord, SupervisorConfig } from "./types";
+import { ensureDir, truncate, writeFileAtomic } from "./utils";
+
+const NOTES_MARKER = "## Codex Working Notes";
+export const DEFAULT_ISSUE_JOURNAL_RELATIVE_PATH = ".codex-supervisor/issues/{issueNumber}/issue-journal.md";
+export const LEGACY_SHARED_ISSUE_JOURNAL_RELATIVE_PATH = ".codex-supervisor/issue-journal.md";
+const DURABLE_PATH_TOKEN_PATTERN =
+  /(?:(?<=["'`])(?:\/[^"'`<>\n]+|[A-Za-z]:[\\/][^"'`<>\n]+)(?=["'`])|(?<![A-Za-z0-9+./\\:-])(?:\/[^\s"'`<>\[\]{}()]+(?:[\\/][^\s"'`<>\[\]{}()]+)*|[A-Za-z]:[\\/][^\s"'`<>\[\]{}()]+(?:[\\/][^\s"'`<>\[\]{}()]+)*))/g;
+const LEADING_PATH_PUNCTUATION = "([{";
+const TRAILING_PATH_PUNCTUATION = ")]},;:!?";
+const REDACTED_LOCAL_PATH = "<redacted-local-path>";
+const REHYDRATED_JOURNAL_NOTE =
+  "Journal rehydration note: this journal was rehydrated on this host because the prior local-only handoff journal was unavailable.";
+const NON_PORTABLE_LOCAL_PATH_PREFIXES = [
+  "/home/",
+  "/Users/",
+  "/tmp/",
+  "/var/",
+  "/private/tmp/",
+  "/private/var/",
+  "/run/",
+  "/dev/",
+  "/mnt/",
+  "/Volumes/",
+] as const;
+const HANDOFF_FIELDS = [
+  "Hypothesis",
+  "What changed",
+  "Current blocker",
+  "Next exact step",
+  "Verification gap",
+  "Files touched",
+  "Rollback concern",
+  "Last focused command",
+] as const;
+type HandoffField = (typeof HANDOFF_FIELDS)[number];
+const HANDOFF_NO_VALUE_PATTERN = /^(none|none\.|no blocker|no blocker\.|n\/a|na|unknown)$/i;
+
+export interface IssueJournalHandoff {
+  hypothesis: string | null;
+  whatChanged: string | null;
+  currentBlocker: string | null;
+  nextExactStep: string | null;
+  verificationGap: string | null;
+  filesTouched: string | null;
+  rollbackConcern: string | null;
+  lastFocusedCommand: string | null;
+}
+
+const LEGACY_HANDOFF_FIELD_MAP: Record<string, HandoffField> = {
+  Hypothesis: "Hypothesis",
+  "What changed": "What changed",
+  "Primary failure or risk": "Current blocker",
+  "Current blocker": "Current blocker",
+  "Next 1-3 actions": "Next exact step",
+  "Next exact step": "Next exact step",
+  "Verification gap": "Verification gap",
+  "Files changed": "Files touched",
+  "Files touched": "Files touched",
+  "Rollback concern": "Rollback concern",
+  "Last focused command": "Last focused command",
+};
+
+function buildNotesTemplate(): string {
+  return [
+    NOTES_MARKER,
+    "### Current Handoff",
+    ...HANDOFF_FIELDS.map((field) => `- ${field}:`),
+    "",
+    "### Scratchpad",
+    "- Keep this section short. The supervisor may compact older notes automatically.",
+    "",
+  ].join("\n");
+}
+
+const NOTES_TEMPLATE = buildNotesTemplate();
+const ISSUE_SCOPED_JOURNAL_PATH_PATTERN = /^\.codex-supervisor\/issues\/(\d+)\/issue-journal\.md$/;
+
+function extractJournalIssueNumber(content: string | null | undefined): number | null {
+  if (!content) {
+    return null;
+  }
+
+  const [header = ""] = content.split(/\r?\n/, 1);
+  const match = header.match(/^(?:\uFEFF)?# Issue #(\d+):/);
+  if (!match) {
+    return null;
+  }
+
+  const issueNumber = Number.parseInt(match[1], 10);
+  return Number.isNaN(issueNumber) ? null : issueNumber;
+}
+
+function splitCurrentHandoff(notes: string): { handoffLines: string[]; remainderLines: string[] } {
+  const lines = notes.split("\n");
+  const handoffHeaderIndex = lines.findIndex((line) => line.trim() === "### Current Handoff");
+  if (handoffHeaderIndex < 0) {
+    return { handoffLines: [], remainderLines: lines };
+  }
+
+  let handoffEndIndex = lines.length;
+  for (let index = handoffHeaderIndex + 1; index < lines.length; index += 1) {
+    if (/^###\s+/.test(lines[index])) {
+      handoffEndIndex = index;
+      break;
+    }
+  }
+
+  return {
+    handoffLines: lines.slice(handoffHeaderIndex + 1, handoffEndIndex),
+    remainderLines: lines.slice(handoffEndIndex),
+  };
+}
+
+function normalizeCurrentHandoff(lines: string[]): string[] {
+  const values = new Map<HandoffField, string>();
+  const extras: string[] = [];
+  let activeField: HandoffField | null = null;
+  let preservingNextStepExtras = false;
+
+  for (const line of lines) {
+    const fieldMatch = line.match(/^- ([^:]+):(.*)$/);
+    if (fieldMatch) {
+      const rawLabel = fieldMatch[1].trim();
+      const mappedField = LEGACY_HANDOFF_FIELD_MAP[rawLabel];
+      const rawValue = fieldMatch[2].trim();
+
+      activeField = mappedField ?? null;
+      preservingNextStepExtras = false;
+      if (!mappedField) {
+        extras.push(line);
+        continue;
+      }
+
+      if (rawValue.length > 0) {
+        values.set(mappedField, rawValue);
+      } else if (!values.has(mappedField)) {
+        values.set(mappedField, "");
+      }
+      continue;
+    }
+
+    if (activeField) {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) {
+        activeField = null;
+        preservingNextStepExtras = false;
+        continue;
+      }
+
+      if (preservingNextStepExtras) {
+        extras.push(line);
+        continue;
+      }
+
+      const isBulletItem = /^[-*]\s+/.test(trimmed);
+      const continuation = trimmed.replace(/^[-*]\s+/, "").trim();
+      if (continuation.length > 0) {
+        const previous = values.get(activeField)?.trim() ?? "";
+        if (activeField === "Next exact step" && previous.length > 0 && isBulletItem) {
+          extras.push(line);
+          preservingNextStepExtras = true;
+          continue;
+        }
+
+        values.set(activeField, previous.length > 0 ? `${previous} ${continuation}` : continuation);
+        continue;
+      }
+    }
+
+    extras.push(line);
+  }
+
+  return [
+    "### Current Handoff",
+    ...HANDOFF_FIELDS.map((field) => `- ${field}: ${values.get(field) ?? ""}`.trimEnd()),
+    ...extras.filter((line) => line.trim().length > 0),
+  ];
+}
+
+function normalizeCodexNotes(notes: string): string {
+  const { handoffLines, remainderLines } = splitCurrentHandoff(notes);
+  if (handoffLines.length === 0) {
+    const lines = notes.split("\n");
+    const scratchpadIndex = lines.findIndex((line) => line.trim() === "### Scratchpad");
+    const fallbackRemainder =
+      scratchpadIndex >= 0
+        ? lines.slice(scratchpadIndex)
+        : ["### Scratchpad", "- Keep this section short. The supervisor may compact older notes automatically.", ""];
+    return `${[NOTES_MARKER, "### Current Handoff", ...HANDOFF_FIELDS.map((field) => `- ${field}:`), "", ...fallbackRemainder]
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trimEnd()}\n`;
+  }
+
+  const normalized = [NOTES_MARKER, ...normalizeCurrentHandoff(handoffLines)];
+  const cleanedRemainder = remainderLines.length > 0 ? remainderLines : ["", "### Scratchpad", "- Keep this section short. The supervisor may compact older notes automatically.", ""];
+  return `${[...normalized, ...cleanedRemainder].join("\n").replace(/\n{3,}/g, "\n\n").trimEnd()}\n`;
+}
+
+function parseCurrentHandoffValues(content: string | null): Map<HandoffField, string> {
+  if (!content) {
+    return new Map();
+  }
+
+  const notes = preserveCodexNotes(content);
+  if (!notes) {
+    return new Map();
+  }
+
+  const { handoffLines } = splitCurrentHandoff(notes);
+  if (handoffLines.length === 0) {
+    return new Map();
+  }
+
+  const values = new Map<HandoffField, string>();
+  for (const line of normalizeCurrentHandoff(handoffLines)) {
+    const match = line.match(/^- ([^:]+):(.*)$/);
+    if (!match) {
+      continue;
+    }
+
+    const field = HANDOFF_FIELDS.find((candidate) => candidate === match[1].trim());
+    if (!field) {
+      continue;
+    }
+
+    values.set(field, match[2].trim());
+  }
+
+  return values;
+}
+
+function normalizeHandoffSummaryValue(value: string | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const collapsed = value.replace(/\s+/g, " ").trim();
+  if (!collapsed || HANDOFF_NO_VALUE_PATTERN.test(collapsed)) {
+    return null;
+  }
+
+  return collapsed;
+}
+
+function formatTrackedJournalPath(workspacePath: string, targetPath: string): string {
+  const relativePath = path.relative(workspacePath, targetPath);
+  if (relativePath.length === 0) {
+    return ".";
+  }
+
+  return relativePath.split(path.sep).join("/");
+}
+
+function stripTokenPunctuation(token: string): { leading: string; core: string; trailing: string } {
+  let leading = "";
+  let trailing = "";
+  let core = token;
+
+  while (core.length > 0 && LEADING_PATH_PUNCTUATION.includes(core[0])) {
+    leading += core[0];
+    core = core.slice(1);
+  }
+
+  while (core.length > 0 && TRAILING_PATH_PUNCTUATION.includes(core[core.length - 1])) {
+    trailing = `${core[core.length - 1]}${trailing}`;
+    core = core.slice(0, -1);
+  }
+
+  if (core.endsWith(".") && /(?:^\/|^[A-Za-z]:[\\/])/.test(core)) {
+    core = core.slice(0, -1);
+    trailing = `.${trailing}`;
+  }
+
+  return { leading, core, trailing };
+}
+
+function normalizeWorkspaceAbsolutePath(candidate: string, workspacePath: string): string | null {
+  const normalizedCandidate = candidate.replace(/\\/g, "/");
+  const normalizedWorkspace = path.resolve(workspacePath).replace(/\\/g, "/");
+  const compareCandidate = /^[A-Za-z]:\//.test(normalizedCandidate) ? normalizedCandidate.toLowerCase() : normalizedCandidate;
+  const compareWorkspace = /^[A-Za-z]:\//.test(normalizedWorkspace) ? normalizedWorkspace.toLowerCase() : normalizedWorkspace;
+
+  if (compareCandidate !== compareWorkspace && !compareCandidate.startsWith(`${compareWorkspace}/`)) {
+    return null;
+  }
+
+  const relativePath = path.posix.relative(normalizedWorkspace, normalizedCandidate);
+  if (relativePath.startsWith("../") || relativePath === "..") {
+    return null;
+  }
+
+  return relativePath.length === 0 ? "." : relativePath;
+}
+
+function normalizeAgainstSafeRoots(candidate: string, safeRoots: Iterable<string>): string | null {
+  for (const safeRoot of safeRoots) {
+    if (!safeRoot) {
+      continue;
+    }
+
+    const normalized = normalizeWorkspaceAbsolutePath(candidate, safeRoot);
+    if (normalized !== null) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+function isNonPortableLocalAbsolutePath(candidate: string): boolean {
+  const normalizedCandidate = candidate.replace(/\\/g, "/");
+  return (
+    NON_PORTABLE_LOCAL_PATH_PREFIXES.some((prefix) => normalizedCandidate.startsWith(prefix)) ||
+    /^[A-Za-z]:\//.test(normalizedCandidate)
+  );
+}
+
+function normalizeDurableJournalText(
+  text: string | null | undefined,
+  workspacePath: string,
+  additionalSafeRoots: Iterable<string> = [],
+): string {
+  if (!text) {
+    return text ?? "";
+  }
+
+  const safeRoots = [workspacePath, ...additionalSafeRoots];
+
+  return text.replace(DURABLE_PATH_TOKEN_PATTERN, (token) => {
+    const { leading, core, trailing } = stripTokenPunctuation(token);
+    if (core.length === 0) {
+      return token;
+    }
+
+    const workspaceRelativePath = normalizeAgainstSafeRoots(core, safeRoots);
+    if (workspaceRelativePath) {
+      return `${leading}${workspaceRelativePath}${trailing}`;
+    }
+
+    if (isNonPortableLocalAbsolutePath(core)) {
+      return `${leading}${REDACTED_LOCAL_PATH}${trailing}`;
+    }
+
+    return token;
+  });
+}
+
+export function normalizeDurableIssueJournalContent(
+  content: string | null | undefined,
+  workspacePath: string,
+): string {
+  return normalizeDurableJournalText(content, workspacePath);
+}
+
+export function normalizeDurableTrackedArtifactContent(
+  content: string | null | undefined,
+  workspacePath: string,
+  additionalSafeRoots: Iterable<string> = [],
+): string {
+  return normalizeDurableJournalText(content, workspacePath, additionalSafeRoots);
+}
+
+function truncateSummaryBody(summary: string, maxLength: number): string {
+  if (summary.length === 0 || maxLength <= 0) {
+    return "";
+  }
+
+  if (summary.length <= maxLength) {
+    return summary;
+  }
+
+  if (maxLength <= 3) {
+    return summary.slice(0, maxLength);
+  }
+
+  return truncate(summary, maxLength) ?? "";
+}
+
+function renderLatestCodexSummary(summary: string | null, failureSignature: string | null): string {
+  if (!summary) {
+    return "- None yet.";
+  }
+
+  const normalizedFailureSignature = failureSignature ?? "none";
+  const failureSignatureLine = `Failure signature: ${normalizedFailureSignature}`;
+  if (failureSignatureLine.length >= 4000) {
+    return truncate(failureSignatureLine, 4000) ?? failureSignatureLine;
+  }
+
+  const body = summary
+    .trimEnd()
+    .split("\n")
+    .filter((line) => !/^Failure signature:/i.test(line.trim()))
+    .join("\n")
+    .trimEnd();
+  const bodyBudget = Math.max(0, 4000 - failureSignatureLine.length - (body.length > 0 ? 1 : 0));
+  const truncatedBody = truncateSummaryBody(body, bodyBudget);
+
+  return truncatedBody.length > 0 ? `${truncatedBody}\n${failureSignatureLine}` : failureSignatureLine;
+}
+
+export function summarizeIssueJournalHandoff(content: string | null): string | null {
+  const values = parseCurrentHandoffValues(content);
+  const blocker = normalizeHandoffSummaryValue(values.get("Current blocker"));
+  const nextStep = normalizeHandoffSummaryValue(values.get("Next exact step"));
+  const summaryParts: string[] = [];
+
+  if (blocker) {
+    summaryParts.push(`blocker: ${blocker}`);
+  }
+  if (nextStep) {
+    summaryParts.push(`next: ${nextStep}`);
+  }
+
+  return summaryParts.length > 0 ? summaryParts.join(" | ") : null;
+}
+
+export function extractIssueJournalHandoff(content: string | null): IssueJournalHandoff {
+  const values = parseCurrentHandoffValues(content);
+  return {
+    hypothesis: normalizeHandoffSummaryValue(values.get("Hypothesis")),
+    whatChanged: normalizeHandoffSummaryValue(values.get("What changed")),
+    currentBlocker: normalizeHandoffSummaryValue(values.get("Current blocker")),
+    nextExactStep: normalizeHandoffSummaryValue(values.get("Next exact step")),
+    verificationGap: normalizeHandoffSummaryValue(values.get("Verification gap")),
+    filesTouched: normalizeHandoffSummaryValue(values.get("Files touched")),
+    rollbackConcern: normalizeHandoffSummaryValue(values.get("Rollback concern")),
+    lastFocusedCommand: normalizeHandoffSummaryValue(values.get("Last focused command")),
+  };
+}
+
+function buildSupervisorSnapshot(args: {
+  issue: GitHubIssue;
+  record: IssueRunRecord;
+  journalPath: string;
+}): string {
+  const { issue, record, journalPath } = args;
+  const sanitize = (value: string | null | undefined): string => normalizeDurableJournalText(value, record.workspace);
+  const failureContext = record.last_failure_context
+    ? [
+        `- Category: ${record.last_failure_context.category ?? "unknown"}`,
+        `- Summary: ${sanitize(record.last_failure_context.summary)}`,
+        record.last_failure_context.command
+          ? `- Command or source: ${sanitize(record.last_failure_context.command)}`
+          : null,
+        record.last_failure_context.url ? `- Reference: ${sanitize(record.last_failure_context.url)}` : null,
+        ...(record.last_failure_context.details.length > 0
+          ? ["- Details:", ...record.last_failure_context.details.map((detail) => `  - ${sanitize(detail)}`)]
+          : []),
+      ]
+        .filter(Boolean)
+        .join("\n")
+    : "- None recorded.";
+
+  return [
+    `# Issue #${issue.number}: ${issue.title}`,
+    "",
+    "## Supervisor Snapshot",
+    `- Issue URL: ${issue.url}`,
+    `- Branch: ${record.branch}`,
+    `- Workspace: ${formatTrackedJournalPath(record.workspace, record.workspace)}`,
+    `- Journal: ${formatTrackedJournalPath(record.workspace, journalPath)}`,
+    `- Current phase: ${record.state}`,
+    `- Attempt count: ${record.attempt_count} (implementation=${record.implementation_attempt_count}, repair=${record.repair_attempt_count})`,
+    `- Last head SHA: ${record.last_head_sha ?? "unknown"}`,
+    `- Blocked reason: ${record.blocked_reason ?? "none"}`,
+    `- Last failure signature: ${record.last_failure_signature ?? "none"}`,
+    `- Repeated failure signature count: ${record.repeated_failure_signature_count}`,
+    `- Updated at: ${record.updated_at}`,
+    "",
+    "## Latest Codex Summary",
+    renderLatestCodexSummary(sanitize(record.last_codex_summary), record.last_failure_signature),
+    "",
+    "## Active Failure Context",
+    failureContext,
+    "",
+  ].join("\n");
+}
+
+function preserveCodexNotes(existing: string): string | null {
+  const markerIndex = existing.indexOf(NOTES_MARKER);
+  if (markerIndex < 0) {
+    return null;
+  }
+
+  return existing.slice(markerIndex);
+}
+
+function compactCodexNotes(notes: string, maxChars: number): string {
+  const normalizedNotes = normalizeCodexNotes(notes);
+
+  if (normalizedNotes.length <= maxChars) {
+    return normalizedNotes;
+  }
+
+  const normalizedLines = normalizedNotes.trimEnd().split("\n");
+  const scratchpadIndex = normalizedLines.findIndex((line) => line.trim() === "### Scratchpad");
+  const headerLines =
+    scratchpadIndex >= 0 ? normalizedLines.slice(0, scratchpadIndex + 1) : normalizedLines;
+  const tailSourceLines = scratchpadIndex >= 0 ? normalizedLines.slice(scratchpadIndex + 1) : [];
+
+  const header = headerLines.join("\n");
+  if (header.length >= maxChars) {
+    return header.slice(0, maxChars);
+  }
+
+  const tailBudget = Math.max(0, maxChars - header.length - 1);
+  const preservedTail: string[] = [];
+  let currentLength = 0;
+
+  for (let index = tailSourceLines.length - 1; index >= 0; index -= 1) {
+    const line = tailSourceLines[index];
+    const nextLength = currentLength + line.length + 1;
+    if (preservedTail.length > 0 && nextLength > tailBudget) {
+      break;
+    }
+
+    preservedTail.unshift(line);
+    currentLength = nextLength;
+  }
+
+  const compacted = [...headerLines, ...preservedTail].join("\n");
+
+  return compacted.length <= maxChars ? compacted : compacted.slice(0, maxChars);
+}
+
+export function hasMeaningfulJournalHandoff(content: string | null): boolean {
+  if (!content) {
+    return false;
+  }
+
+  const notes = preserveCodexNotes(content);
+  if (!notes) {
+    return false;
+  }
+
+  const normalized = normalizeCodexNotes(notes).trim();
+  return normalized !== NOTES_TEMPLATE.trim();
+}
+
+export function resolveIssueJournalRelativePath(relativePathTemplate: string, issueNumber: number): string {
+  return relativePathTemplate.replaceAll("{issueNumber}", String(issueNumber));
+}
+
+function workspaceRelativeJournalPath(workspacePath: string, journalPath: string): string {
+  const relativePath = path.isAbsolute(journalPath) ? path.relative(workspacePath, journalPath) : journalPath;
+  return relativePath.replace(/\\/g, "/");
+}
+
+export function trackedIssueJournalRelativePath(
+  workspacePath: string,
+  journalPath: string | null,
+  relativePathTemplate: string,
+  issueNumber: number,
+): string {
+  const canonicalRelativePath = resolveIssueJournalRelativePath(relativePathTemplate, issueNumber);
+  if (journalPath === null) {
+    return canonicalRelativePath;
+  }
+
+  const relativeJournalPath = workspaceRelativeJournalPath(workspacePath, journalPath);
+  const scopedMatch = relativeJournalPath.match(ISSUE_SCOPED_JOURNAL_PATH_PATTERN);
+  return relativeJournalPath === LEGACY_SHARED_ISSUE_JOURNAL_RELATIVE_PATH
+    || (scopedMatch !== null && Number.parseInt(scopedMatch[1], 10) !== issueNumber)
+    ? canonicalRelativePath
+    : relativeJournalPath;
+}
+
+export function trackedIssueJournalPath(
+  workspacePath: string,
+  journalPath: string | null,
+  relativePathTemplate: string,
+  issueNumber: number,
+): string {
+  return path.resolve(
+    workspacePath,
+    trackedIssueJournalRelativePath(workspacePath, journalPath, relativePathTemplate, issueNumber),
+  );
+}
+
+export function issueJournalPath(workspacePath: string, relativePathTemplate: string, issueNumber?: number): string {
+  if (relativePathTemplate.includes("{issueNumber}") && issueNumber === undefined) {
+    throw new Error("issueJournalRelativePath requires issueNumber when using {issueNumber}");
+  }
+
+  const relativePath =
+    issueNumber === undefined
+      ? relativePathTemplate
+      : resolveIssueJournalRelativePath(relativePathTemplate, issueNumber);
+  return path.resolve(workspacePath, relativePath);
+}
+
+function hasLocalTrackedWorkspace(workspacePath: string): boolean {
+  return fsSync.existsSync(path.join(workspacePath, ".git"));
+}
+
+export function resolveTrackedIssueHostPaths(
+  config: Pick<SupervisorConfig, "workspaceRoot" | "issueJournalRelativePath">,
+  record: Pick<IssueRunRecord, "issue_number" | "workspace" | "journal_path">,
+): {
+  workspace: string;
+  journal_path: string;
+  usingCanonicalWorkspace: boolean;
+} {
+  const canonicalWorkspacePath = path.join(config.workspaceRoot, `issue-${record.issue_number}`);
+  const usingCanonicalWorkspace = hasLocalTrackedWorkspace(canonicalWorkspacePath);
+  const workspacePath = usingCanonicalWorkspace ? canonicalWorkspacePath : record.workspace;
+  const journalRelativePath = trackedIssueJournalRelativePath(
+    record.workspace,
+    record.journal_path,
+    config.issueJournalRelativePath,
+    record.issue_number,
+  );
+  const resolvedJournalPath = path.resolve(workspacePath, journalRelativePath);
+  const relativeToWorkspace = path.relative(workspacePath, resolvedJournalPath);
+  const escapesWorkspace =
+    relativeToWorkspace === ".." ||
+    relativeToWorkspace.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativeToWorkspace);
+
+  return {
+    workspace: workspacePath,
+    journal_path: escapesWorkspace
+      ? trackedIssueJournalPath(
+        workspacePath,
+        null,
+        config.issueJournalRelativePath,
+        record.issue_number,
+      )
+      : resolvedJournalPath,
+    usingCanonicalWorkspace,
+  };
+}
+
+export interface TrackedIssueHostDiagnostics {
+  resolvedPaths: {
+    workspace: string;
+    journal_path: string;
+    usingCanonicalWorkspace: boolean;
+  };
+  journalReadPath: string;
+  workspaceStatus: "current" | "auto_repaired" | "missing";
+  journalPathStatus: "current" | "auto_repaired" | "missing";
+  journalStatus: "current" | "rehydrated" | "missing";
+  guidance: "no_manual_action_required" | "manual_action_required" | null;
+  journalContent: string | null;
+}
+
+export function isRehydratedIssueJournalContent(content: string | null | undefined): boolean {
+  return typeof content === "string" && content.includes(REHYDRATED_JOURNAL_NOTE);
+}
+
+export async function inspectTrackedIssueHostDiagnostics(
+  config: Pick<SupervisorConfig, "workspaceRoot" | "issueJournalRelativePath">,
+  record: Pick<IssueRunRecord, "issue_number" | "workspace" | "journal_path">,
+): Promise<TrackedIssueHostDiagnostics> {
+  const resolvedPaths = resolveTrackedIssueHostPaths(config, record);
+  const persistedWorkspace = path.resolve(record.workspace);
+  const workspaceStatus =
+    resolvedPaths.usingCanonicalWorkspace && persistedWorkspace !== resolvedPaths.workspace
+      ? "auto_repaired"
+      : "current";
+  const journalPathStatus =
+    record.journal_path !== null && path.resolve(record.journal_path) !== resolvedPaths.journal_path
+      ? "auto_repaired"
+      : "current";
+  const journalReadPath =
+    resolvedPaths.usingCanonicalWorkspace || record.journal_path === null
+      ? resolvedPaths.journal_path
+      : record.journal_path;
+  const journalContent = await readIssueJournal(journalReadPath);
+  const journalStatus =
+    journalContent === null
+      ? "missing"
+      : isRehydratedIssueJournalContent(journalContent)
+        ? "rehydrated"
+        : "current";
+  const guidance =
+    !resolvedPaths.usingCanonicalWorkspace
+      ? null
+      : journalStatus === "missing"
+        ? "manual_action_required"
+        : workspaceStatus === "auto_repaired" || journalPathStatus === "auto_repaired" || journalStatus === "rehydrated"
+          ? "no_manual_action_required"
+          : null;
+
+  return {
+    resolvedPaths,
+    journalReadPath,
+    workspaceStatus,
+    journalPathStatus,
+    journalStatus,
+    guidance,
+    journalContent,
+  };
+}
+
+export async function readIssueJournal(journalPath: string): Promise<string | null> {
+  try {
+    return await fs.readFile(journalPath, "utf8");
+  } catch (error) {
+    const maybeErr = error as NodeJS.ErrnoException;
+    if (maybeErr.code === "ENOENT") {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+export async function syncIssueJournal(args: {
+  issue: GitHubIssue;
+  record: IssueRunRecord;
+  journalPath: string;
+  maxChars?: number;
+}): Promise<void> {
+  const { issue, record, journalPath, maxChars = 6000 } = args;
+  await ensureDir(path.dirname(journalPath));
+  const existing = await readIssueJournal(journalPath);
+  const existingIssueNumber = extractJournalIssueNumber(existing);
+  const notes =
+    existing && (existingIssueNumber === null || existingIssueNumber === issue.number)
+      ? normalizeDurableIssueJournalContent(preserveCodexNotes(existing), record.workspace)
+      : null;
+  const rehydrationNotes =
+    existing === null && shouldAnnotateJournalRehydration(record)
+      ? buildRehydratedJournalNotes()
+      : null;
+  const snapshot = buildSupervisorSnapshot({ issue, record, journalPath });
+  const nextContent = `${snapshot}\n${notes ? compactCodexNotes(notes, maxChars) : rehydrationNotes ?? NOTES_TEMPLATE}`;
+  await writeFileAtomic(journalPath, nextContent);
+}
+
+function shouldAnnotateJournalRehydration(
+  record: Pick<
+    IssueRunRecord,
+    | "attempt_count"
+    | "implementation_attempt_count"
+    | "repair_attempt_count"
+    | "pr_number"
+    | "codex_session_id"
+    | "last_codex_summary"
+    | "last_error"
+    | "last_failure_context"
+    | "last_recovery_reason"
+  >,
+): boolean {
+  return (
+    record.attempt_count > 1 ||
+    record.implementation_attempt_count > 1 ||
+    record.repair_attempt_count > 1 ||
+    record.pr_number !== null ||
+    record.codex_session_id !== null ||
+    record.last_codex_summary !== null ||
+    record.last_error !== null ||
+    record.last_failure_context !== null ||
+    record.last_recovery_reason !== null
+  );
+}
+
+function buildRehydratedJournalNotes(): string {
+  return [
+    NOTES_MARKER,
+    "### Current Handoff",
+    ...HANDOFF_FIELDS.map((field) => `- ${field}:`),
+    "",
+    "### Scratchpad",
+    `- ${REHYDRATED_JOURNAL_NOTE}`,
+    "- Prior host-local handoff text could not be recovered from durable state when recreating the local journal.",
+    "- Keep this section short. The supervisor may compact older notes automatically.",
+    "",
+  ].join("\n");
+}
+
+export async function normalizeCommittedIssueJournal(args: {
+  journalPath: string;
+  workspacePath: string;
+}): Promise<string | null> {
+  const existing = await readIssueJournal(args.journalPath);
+  if (existing === null) {
+    return null;
+  }
+
+  const normalized = normalizeDurableIssueJournalContent(existing, args.workspacePath);
+  if (normalized !== existing) {
+    await writeFileAtomic(args.journalPath, normalized);
+  }
+
+  return normalized;
+}

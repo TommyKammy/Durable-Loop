@@ -550,6 +550,7 @@ function buildBlockers(args: {
   fields: SetupReadinessField[];
   hostReadiness: SetupReadinessHostSummary;
   modelRoutingPosture: SetupReadinessModelRoutingPosture;
+  invalidFields: string[];
 }): SetupReadinessBlocker[] {
   const blockers: SetupReadinessBlocker[] = [];
 
@@ -638,6 +639,28 @@ function buildBlockers(args: {
         kind: "edit_config",
         summary: target.guidance,
         fieldKeys: [target.modelField],
+      },
+    });
+  }
+
+  // Catch-all: surface any invalid config field that no rendered field, host
+  // check, or model-routing target already blocks. Without this, a config field
+  // that the parser rejects (e.g. a new field not registered as a setup field)
+  // would make `loadConfig` throw while setup readiness reports no blocker.
+  const coveredFieldKeys = new Set<string>(blockers.flatMap((blocker) => [...blocker.fieldKeys]));
+  for (const field of args.invalidFields) {
+    if (coveredFieldKeys.has(field)) {
+      continue;
+    }
+    coveredFieldKeys.add(field);
+    blockers.push({
+      code: `invalid_config_field_${field}`,
+      message: `Config field "${field}" is invalid; first-run setup is blocked until it is corrected or removed.`,
+      fieldKeys: [],
+      remediation: {
+        kind: "edit_config",
+        summary: `Correct or remove the invalid "${field}" field in the supervisor config.`,
+        fieldKeys: [],
       },
     });
   }
@@ -823,7 +846,12 @@ export async function diagnoseSetupReadiness(
     })
     : null;
   const hostReadiness = buildHostReadiness(hostDiagnostics?.checks ?? null, hostDiagnostics?.overallStatus ?? null);
-  const blockers = buildBlockers({ fields, hostReadiness, modelRoutingPosture });
+  const blockers = buildBlockers({
+    fields,
+    hostReadiness,
+    modelRoutingPosture,
+    invalidFields: configSummary.invalidFields,
+  });
   const localCiContract = summarizeLocalCiContract(localCiContractConfig);
   const nextActions = buildNextActions({
     blockers,

@@ -14,9 +14,18 @@ import type { PromptBuilder } from "./types";
 
 /**
  * Returns the executor kind from the supervisor config.
- * Falls back to "codex" for backward compatibility.
+ *
+ * An explicit `executorKind` config field takes precedence; otherwise the kind
+ * is inferred from the `codexBinary` path (an aliased binary name that does not
+ * contain "opencode"/"claude" falls back to "codex"). The explicit field exists
+ * because path inference is ambiguous for aliased binaries.
  */
-export function resolveExecutorKind(config: Pick<SupervisorConfig, "codexBinary">): ExecutorKind {
+export function resolveExecutorKind(
+  config: Pick<SupervisorConfig, "codexBinary" | "executorKind">,
+): ExecutorKind {
+  if (config.executorKind) {
+    return config.executorKind;
+  }
   const binary = config.codexBinary?.toLowerCase() ?? "";
   if (binary.includes("opencode")) return "opencode";
   if (binary.includes("claude")) return "claude";

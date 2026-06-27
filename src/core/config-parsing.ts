@@ -1,5 +1,6 @@
 import path from "node:path";
 import {
+  ConfiguredExecutorKind,
   CopilotReviewTimeoutAction,
   ExecutionSafetyMode,
   LocalCiCommandConfig,
@@ -205,6 +206,31 @@ function assertString(value: unknown, label: string): string {
   }
 
   return value;
+}
+
+const VALID_EXECUTOR_KINDS: ReadonlySet<ConfiguredExecutorKind> = new Set([
+  "codex",
+  "opencode",
+  "claude",
+  "mock",
+]);
+
+/**
+ * Parse the optional explicit executor selection. Returns a spreadable object
+ * so the key stays absent when unset (preserving backward-compatible config
+ * shapes). An present-but-invalid value fails closed rather than silently
+ * falling back to binary-path inference.
+ */
+function parseExecutorKind(value: unknown): { executorKind?: ConfiguredExecutorKind } {
+  if (value === undefined || value === null) {
+    return {};
+  }
+  if (typeof value !== "string" || !VALID_EXECUTOR_KINDS.has(value as ConfiguredExecutorKind)) {
+    throw new Error(
+      `Invalid config field: executorKind must be one of ${[...VALID_EXECUTOR_KINDS].join(", ")}`,
+    );
+  }
+  return { executorKind: value as ConfiguredExecutorKind };
 }
 
 function assertPattern(value: string, label: string, pattern: RegExp): string {
@@ -441,6 +467,7 @@ export function parseSupervisorConfigDocument(raw: Record<string, unknown>, reso
         ? resolveMaybeRelative(configDir, raw.stateBootstrapFile)
         : undefined,
     codexBinary: resolveCommandLikeValue(configDir, assertString(raw.codexBinary, "codexBinary")),
+    ...parseExecutorKind(raw.executorKind),
     trustMode:
       typeof raw.trustMode === "string" && VALID_TRUST_MODES.has(raw.trustMode as TrustMode)
         ? (raw.trustMode as TrustMode)

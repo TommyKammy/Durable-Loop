@@ -550,6 +550,7 @@ function buildBlockers(args: {
   fields: SetupReadinessField[];
   hostReadiness: SetupReadinessHostSummary;
   modelRoutingPosture: SetupReadinessModelRoutingPosture;
+  invalidFields: string[];
 }): SetupReadinessBlocker[] {
   const blockers: SetupReadinessBlocker[] = [];
 
@@ -638,6 +639,37 @@ function buildBlockers(args: {
         kind: "edit_config",
         summary: target.guidance,
         fieldKeys: [target.modelField],
+      },
+    });
+  }
+
+  // Catch-all: surface any invalid config field that no rendered field, host
+  // check, or model-routing target already blocks. Without this, a config field
+  // that the parser rejects (e.g. a new field not registered as a setup field)
+  // would make `loadConfig` throw while setup readiness reports no blocker.
+  const coveredFieldKeys = new Set<string>(blockers.flatMap((blocker) => [...blocker.fieldKeys]));
+  // codexBinary and executorBinary are the same binary; if one is already
+  // blocked (e.g. a missing-binary blocker), the alias is covered too, so we
+  // do not emit a confusing second blocker for the other key.
+  if (coveredFieldKeys.has("codexBinary")) {
+    coveredFieldKeys.add("executorBinary");
+  }
+  if (coveredFieldKeys.has("executorBinary")) {
+    coveredFieldKeys.add("codexBinary");
+  }
+  for (const field of args.invalidFields) {
+    if (coveredFieldKeys.has(field)) {
+      continue;
+    }
+    coveredFieldKeys.add(field);
+    blockers.push({
+      code: `invalid_config_field_${field}`,
+      message: `Config field "${field}" is invalid; first-run setup is blocked until it is corrected or removed.`,
+      fieldKeys: [],
+      remediation: {
+        kind: "edit_config",
+        summary: `Correct or remove the invalid "${field}" field in the supervisor config.`,
+        fieldKeys: [],
       },
     });
   }
@@ -823,7 +855,17 @@ export async function diagnoseSetupReadiness(
     })
     : null;
   const hostReadiness = buildHostReadiness(hostDiagnostics?.checks ?? null, hostDiagnostics?.overallStatus ?? null);
-  const blockers = buildBlockers({ fields, hostReadiness, modelRoutingPosture });
+  const blockers = buildBlockers({
+    fields,
+    hostReadiness,
+    modelRoutingPosture,
+    invalidFields: configSummary.invalidFields,
+  });
+  // A generic invalid-config blocker means the parser rejects the config even if
+  // every rendered field looks configured, so the overall status must be invalid.
+  const hasGenericInvalidConfigBlocker = blockers.some((blocker) =>
+    blocker.code.startsWith("invalid_config_field_"),
+  );
   const localCiContract = summarizeLocalCiContract(localCiContractConfig);
   const nextActions = buildNextActions({
     blockers,
@@ -836,7 +878,9 @@ export async function diagnoseSetupReadiness(
   return {
     kind: "setup_readiness",
     ready: blockers.length === 0,
-    overallStatus: overallStatusFromFields(fields, modelRoutingPosture),
+    overallStatus: hasGenericInvalidConfigBlocker
+      ? "invalid"
+      : overallStatusFromFields(fields, modelRoutingPosture),
     configPath,
     fields,
     configPostureGroups,

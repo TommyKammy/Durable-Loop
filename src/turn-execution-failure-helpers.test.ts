@@ -339,3 +339,34 @@ test("persistCodexTurnExecutionFailure falls back to the message classifier when
   assert.equal(updated.last_failure_kind, "command_error");
   assert.equal(updated.timeout_retry_count, 0);
 });
+
+test("persistCodexTurnExecutionFailure recovers a message-only timeout via the classifier fallback", async () => {
+  // Mirrors the call-site behavior where a non-throwing non-zero exit
+  // (failureKind command_error) passes no precomputed kind, so a legacy
+  // "Command timed out after" summary in the output is still classified.
+  const state: SupervisorStateFile = {
+    activeIssueNumber: 107,
+    issues: {
+      "107": createRecord({ issue_number: 107, state: "stabilizing", timeout_retry_count: 0 }),
+    },
+  };
+
+  const updated = await persistCodexTurnExecutionFailure({
+    stateStore: {
+      touch: (record, patch) => ({ ...record, ...patch, updated_at: "2026-03-24T03:15:00Z" }),
+      save: async () => undefined,
+    },
+    state,
+    record: state.issues["107"]!,
+    issue: { createdAt: "2026-03-24T03:00:00Z" },
+    syncJournal: async () => undefined,
+    issueNumber: 107,
+    error: new Error("Command timed out after 1800000ms: opencode run"),
+    classifyFailure: messageClassifier,
+    buildCodexFailureContext: failureContextStub,
+    applyFailureSignature: () => ({ last_failure_signature: null, repeated_failure_signature_count: 0 }),
+  });
+
+  assert.equal(updated.last_failure_kind, "timeout");
+  assert.equal(updated.timeout_retry_count, 1);
+});

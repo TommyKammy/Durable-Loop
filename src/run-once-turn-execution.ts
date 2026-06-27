@@ -523,9 +523,11 @@ export async function executeCodexTurnPhase(
             syncJournal,
             issueNumber: record.issue_number,
             error: new Error(message),
-            // Preserve the turn-boundary classification (which may be a
-            // flag-based timeout) instead of re-deriving it from the message.
-            failureKind: turnResult.failureKind,
+            // Preserve a structured (flag-based) timeout from the turn boundary,
+            // but for command_error let persistence fall back to classifying the
+            // message — a non-throwing non-zero exit can still carry a legacy
+            // "Command timed out after" summary in its output.
+            failureKind: turnResult.failureKind === "timeout" ? "timeout" : undefined,
             classifyFailure: args.classifyFailure,
             buildCodexFailureContext: args.buildCodexFailureContext,
             applyFailureSignature: args.applyFailureSignature,

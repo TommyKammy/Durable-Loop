@@ -55,7 +55,7 @@ import {
   pushBranch,
 } from "./core/workspace";
 import { AgentRunner } from "./supervisor/agent-runner";
-import { createExecutor, executorToAgentRunner } from "./executors";
+import { createExecutor, executorToAgentRunner, resolveExecutorKind } from "./executors";
 import {
   executionMetricsRetentionRootPath,
   syncExecutionMetricsRunSummarySafely,
@@ -204,6 +204,7 @@ interface ExecuteCodexTurnPhaseArgs {
     issueNumber: number;
     error: unknown;
     failureKind?: "timeout" | "command_error";
+    failureCategory?: FailureContext["category"];
     classifyFailure: (
       message: string | null | undefined,
     ) => "timeout" | "command_error";
@@ -281,6 +282,8 @@ interface ExecuteCodexTurnPhaseArgs {
     hintedState: "blocked" | "failed";
     hintedBlockedReason: IssueRunRecord["blocked_reason"];
     hintedFailureSignature: string | null;
+    failedCategory?: FailureContext["category"];
+    failedKind?: "codex_failed" | "executor_failed";
     buildCodexFailureContext: (
       category: FailureContext["category"],
       summary: string,
@@ -340,6 +343,11 @@ export async function executeCodexTurnPhase(
         buildFailureContextImpl: args.buildCodexFailureContext,
       }),
     );
+  // Persisted failure records should carry the executor-neutral category/kind
+  // for non-Codex executors so metrics are not misattributed to Codex.
+  const isCodexExecutor = resolveExecutorKind(args.config) === "codex";
+  const executorFailureCategory = isCodexExecutor ? "codex" : "executor";
+  const executorFailedKind = isCodexExecutor ? "codex_failed" : "executor_failed";
   const { config, stateStore, github } = args;
   const {
     state,
@@ -528,6 +536,7 @@ export async function executeCodexTurnPhase(
             // message — a non-throwing non-zero exit can still carry a legacy
             // "Command timed out after" summary in its output.
             failureKind: turnResult.failureKind === "timeout" ? "timeout" : undefined,
+            failureCategory: executorFailureCategory,
             classifyFailure: args.classifyFailure,
             buildCodexFailureContext: args.buildCodexFailureContext,
             applyFailureSignature: args.applyFailureSignature,
@@ -579,6 +588,8 @@ export async function executeCodexTurnPhase(
             hintedState,
             hintedBlockedReason,
             hintedFailureSignature,
+            failedCategory: executorFailureCategory,
+            failedKind: executorFailedKind,
             buildCodexFailureContext: args.buildCodexFailureContext,
             applyFailureSignature: args.applyFailureSignature,
             normalizeBlockerSignature: args.normalizeBlockerSignature,

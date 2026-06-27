@@ -1,5 +1,5 @@
 import { StateStore } from "./core/state-store";
-import { CodexTurnResult, FailureContext, GitHubIssue, IssueRunRecord, SupervisorStateFile } from "./core/types";
+import { CodexTurnResult, FailureContext, FailureContextCategory, GitHubIssue, IssueRunRecord, SupervisorStateFile } from "./core/types";
 import { issueDefinitionFreshnessPatch } from "./issue-definition-freshness";
 import { truncate, truncatePreservingStartAndEnd } from "./core/utils";
 import { syncExecutionMetricsRunSummarySafely } from "./supervisor/execution-metrics-run-summary";
@@ -22,6 +22,12 @@ interface PersistTurnExecutionFailureArgs {
    * derived from the error message via `classifyFailure`.
    */
   failureKind?: "timeout" | "command_error";
+  /**
+   * Executor-neutral failure category to record. Defaults to "codex" for the
+   * Codex path; non-Codex executors pass "executor" so the persisted record is
+   * not misattributed to Codex.
+   */
+  failureCategory?: FailureContextCategory;
   classifyFailure: (message: string | null | undefined) => "timeout" | "command_error";
   buildCodexFailureContext: (
     category: FailureContext["category"],
@@ -86,6 +92,13 @@ interface PersistHintedCodexTurnStateArgs {
   hintedState: "blocked" | "failed";
   hintedBlockedReason: IssueRunRecord["blocked_reason"];
   hintedFailureSignature: string | null;
+  /**
+   * Executor-neutral category/kind to record for a `failed` hint. Default to
+   * the Codex values; non-Codex executors pass the neutral values so hinted
+   * failures are not misattributed to Codex. Ignored for `blocked` hints.
+   */
+  failedCategory?: FailureContextCategory;
+  failedKind?: "codex_failed" | "executor_failed";
   buildCodexFailureContext: (
     category: FailureContext["category"],
     summary: string,
@@ -177,7 +190,7 @@ export async function persistCodexTurnExecutionFailure(args: PersistTurnExecutio
   const message = args.error instanceof Error ? args.error.stack ?? args.error.message : String(args.error);
   const failureKind = args.failureKind ?? args.classifyFailure(message);
   const failureContext = args.buildCodexFailureContext(
-    "codex",
+    args.failureCategory ?? "codex",
     `Codex turn execution failed for issue #${args.issueNumber}.`,
     [truncatePreservingStartAndEnd(message, 2000) ?? "Unknown failure"],
   );
@@ -260,7 +273,7 @@ export async function persistMissingCodexJournalHandoff(
 
 export async function persistHintedCodexTurnState(args: PersistHintedCodexTurnStateArgs): Promise<IssueRunRecord> {
   const failureContext = args.buildCodexFailureContext(
-    args.hintedState === "failed" ? "codex" : "blocked",
+    args.hintedState === "failed" ? (args.failedCategory ?? "codex") : "blocked",
     `Codex reported ${args.hintedState} for issue #${args.issueNumber}.`,
     [truncate(args.lastMessage, 2000) ?? "No additional summary."],
   );
@@ -278,7 +291,7 @@ export async function persistHintedCodexTurnState(args: PersistHintedCodexTurnSt
     patch: {
       state: args.hintedState,
       last_error: truncate(args.lastMessage),
-      last_failure_kind: args.hintedState === "failed" ? "codex_failed" : null,
+      last_failure_kind: args.hintedState === "failed" ? (args.failedKind ?? "codex_failed") : null,
       last_failure_context: failureContext,
       ...args.applyFailureSignature(args.record, failureContext),
       ...nextBlockerTracking(args.record, args.hintedState, args.lastMessage, args.normalizeBlockerSignature),

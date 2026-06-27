@@ -370,3 +370,62 @@ test("persistCodexTurnExecutionFailure recovers a message-only timeout via the c
   assert.equal(updated.last_failure_kind, "timeout");
   assert.equal(updated.timeout_retry_count, 1);
 });
+
+test("persistCodexTurnExecutionFailure records the executor-neutral category when provided", async () => {
+  const state: SupervisorStateFile = {
+    activeIssueNumber: 108,
+    issues: { "108": createRecord({ issue_number: 108, state: "stabilizing" }) },
+  };
+
+  const updated = await persistCodexTurnExecutionFailure({
+    stateStore: {
+      touch: (record, patch) => ({ ...record, ...patch, updated_at: "2026-03-24T03:15:00Z" }),
+      save: async () => undefined,
+    },
+    state,
+    record: state.issues["108"]!,
+    issue: { createdAt: "2026-03-24T03:00:00Z" },
+    syncJournal: async () => undefined,
+    issueNumber: 108,
+    error: new Error("opencode exited unexpectedly"),
+    failureKind: "command_error",
+    failureCategory: "executor",
+    classifyFailure: messageClassifier,
+    buildCodexFailureContext: failureContextStub,
+    applyFailureSignature: () => ({ last_failure_signature: null, repeated_failure_signature_count: 0 }),
+  });
+
+  assert.equal(updated.last_failure_context?.category, "executor");
+});
+
+test("persistHintedCodexTurnState records executor-neutral failed category and kind when provided", async () => {
+  const state: SupervisorStateFile = {
+    activeIssueNumber: 109,
+    issues: { "109": createRecord({ issue_number: 109, state: "stabilizing" }) },
+  };
+
+  const updated = await persistHintedCodexTurnState({
+    stateStore: {
+      touch: (record, patch) => ({ ...record, ...patch, updated_at: "2026-03-24T03:15:00Z" }),
+      save: async () => undefined,
+    },
+    state,
+    record: state.issues["109"]!,
+    issue: { createdAt: "2026-03-24T03:00:00Z" },
+    syncJournal: async () => undefined,
+    issueNumber: 109,
+    lastMessage: "State hint: failed",
+    hintedState: "failed",
+    hintedBlockedReason: null,
+    hintedFailureSignature: null,
+    failedCategory: "executor",
+    failedKind: "executor_failed",
+    buildCodexFailureContext: failureContextStub,
+    applyFailureSignature: () => ({ last_failure_signature: null, repeated_failure_signature_count: 0 }),
+    normalizeBlockerSignature: () => null,
+    isVerificationBlockedMessage: () => false,
+  });
+
+  assert.equal(updated.last_failure_kind, "executor_failed");
+  assert.equal(updated.last_failure_context?.category, "executor");
+});

@@ -213,7 +213,7 @@ export class ClaudeCodeExecutor implements Executor {
       classifyFailureImpl: options.classifyFailureImpl,
       buildFailureContextImpl: options.buildFailureContextImpl,
       exitFailureKind: "command_error",
-      failureCategory: "codex", // Reuse existing category for backward compat
+      failureCategory: "executor", // Executor-neutral category (not Codex-specific)
       providerName: "Claude Code",
       promptBuilder: options.promptBuilder ?? new GenericPromptBuilder("Claude Code"),
     });

@@ -24,8 +24,8 @@ const TERMINAL_OUTCOME_CATEGORIES = ["completed", "blocked", "failed"] as const;
 const REVIEW_METRICS_CLASSIFICATIONS = ["configured_bot_threads"] as const;
 const REVIEW_METRICS_TOTAL_COUNT_KINDS = ["actionable_thread_instances"] as const;
 const FAILURE_METRICS_CLASSIFICATIONS = ["latest_failure"] as const;
-const FAILURE_METRICS_CATEGORIES = ["checks", "review", "conflict", "codex", "manual", "blocked"] as const;
-const FAILURE_METRICS_KINDS = ["timeout", "command_error", "codex_exit", "codex_failed"] as const;
+const FAILURE_METRICS_CATEGORIES = ["checks", "review", "conflict", "executor", "codex", "manual", "blocked"] as const;
+const FAILURE_METRICS_KINDS = ["timeout", "command_error", "executor_exit", "executor_failed", "codex_exit", "codex_failed"] as const;
 const FAILURE_METRICS_BLOCKED_REASONS = [
   "requirements",
   "clarification",

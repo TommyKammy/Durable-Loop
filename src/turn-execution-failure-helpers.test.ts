@@ -6,7 +6,7 @@ import {
   persistCodexTurnExitFailure,
   persistHintedCodexTurnState,
 } from "./turn-execution-failure-helpers";
-import { SupervisorStateFile } from "./core/types";
+import { FailureContextCategory, SupervisorStateFile } from "./core/types";
 import { createRecord } from "./turn-execution-test-helpers";
 
 test("persistHintedCodexTurnState records blocked reasons and repeated blocker bookkeeping from Codex hints", async () => {
@@ -266,7 +266,7 @@ test("persistCodexTurnExitFailure skips issue-definition freshness when labels a
 });
 
 const failureContextStub = (
-  category: "checks" | "review" | "conflict" | "codex" | "manual" | "blocked" | null,
+  category: FailureContextCategory,
   summary: string,
   details: string[],
 ) => ({

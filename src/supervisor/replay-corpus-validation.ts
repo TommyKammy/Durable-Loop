@@ -40,8 +40,8 @@ const BLOCKED_REASONS = [
   "handoff_missing",
   "unknown",
 ] as const;
-const FAILURE_CONTEXT_CATEGORIES = ["checks", "review", "conflict", "codex", "manual", "blocked"] as const;
-const FAILURE_KINDS = ["timeout", "command_error", "codex_exit", "codex_failed"] as const;
+const FAILURE_CONTEXT_CATEGORIES = ["checks", "review", "conflict", "executor", "codex", "manual", "blocked"] as const;
+const FAILURE_KINDS = ["timeout", "command_error", "executor_exit", "executor_failed", "codex_exit", "codex_failed"] as const;
 const COPILOT_REVIEW_TIMEOUT_ACTIONS = ["continue", "block"] as const;
 const LOCAL_REVIEW_SEVERITIES = ["none", "low", "medium", "high"] as const;
 const LOCAL_REVIEW_RECOMMENDATIONS = ["ready", "changes_requested", "unknown"] as const;

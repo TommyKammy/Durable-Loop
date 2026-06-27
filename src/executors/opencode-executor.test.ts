@@ -269,6 +269,8 @@ test("OpenCodeExecutor handles non-zero exit with failure classification", async
   assert.equal(result.failureKind, "command_error");
   assert.equal(result.structuredResult, null);
   assert.ok(result.failureContext !== null);
+  // Executor-neutral category, not the Codex-specific "codex".
+  assert.equal(result.failureContext?.category, "executor");
 });
 
 test("OpenCodeExecutor handles timeout errors with correct failure kind", async () => {

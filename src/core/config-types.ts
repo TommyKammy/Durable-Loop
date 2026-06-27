@@ -236,6 +236,14 @@ export interface SupervisorConfig {
   codexConnectorReviewChurnFileConcentrationPercent?: number;
   codexConnectorAutoMergeEnabled?: boolean;
   codexExecTimeoutMinutes: number;
+  /**
+   * Optional per-executor override for the agent turn timeout. When set, it
+   * applies to the executor turn (Codex/OpenCode/Claude) instead of the shared
+   * `codexExecTimeoutMinutes`, which different CLIs may need. Falls back to
+   * `codexExecTimeoutMinutes` when unset. Non-turn timeouts (git probes, local
+   * review) continue to use `codexExecTimeoutMinutes`.
+   */
+  executorTimeoutMinutes?: number;
   maxCodexAttemptsPerIssue: number;
   maxImplementationAttemptsPerIssue: number;
   maxRepairAttemptsPerIssue: number;
@@ -248,4 +256,17 @@ export interface SupervisorConfig {
   cleanupOrphanedWorkspacesAfterHours?: number;
   mergeMethod: "merge" | "squash" | "rebase";
   draftPrAfterAttempt: number;
+}
+
+/**
+ * Resolve the agent turn timeout in minutes: the per-executor
+ * `executorTimeoutMinutes` override when set, otherwise the shared
+ * `codexExecTimeoutMinutes`. Used by the executor turn callers
+ * (Codex/OpenCode/Claude); non-turn timeouts keep using
+ * `codexExecTimeoutMinutes` directly.
+ */
+export function resolveExecutorTurnTimeoutMinutes(
+  config: Pick<SupervisorConfig, "executorTimeoutMinutes" | "codexExecTimeoutMinutes">,
+): number {
+  return config.executorTimeoutMinutes ?? config.codexExecTimeoutMinutes;
 }

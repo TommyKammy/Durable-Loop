@@ -29,6 +29,7 @@ import type {
   SupervisorConfig,
   RunState,
 } from "../core/types";
+import { resolveExecutorTurnTimeoutMinutes } from "../core/config-types";
 import {
   createExecutorAgentRunner,
   runExecutorCliCommand,
@@ -152,7 +153,7 @@ export const runClaudeCodeTurn: RunExecutorTurnFn = async (
   sessionId,
 ): Promise<ExecutorTurnResult> => {
   const args = buildClaudeCodeArgs(config, workspacePath, prompt, state, sessionId);
-  const timeoutMs = config.codexExecTimeoutMinutes * 60_000;
+  const timeoutMs = resolveExecutorTurnTimeoutMinutes(config) * 60_000;
 
   return runExecutorCliCommand(config.codexBinary, args, {
     cwd: workspacePath,

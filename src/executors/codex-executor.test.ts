@@ -489,3 +489,28 @@ test("resolveExecutorKind detects claude", () => {
   const config = createConfig({ codexBinary: "/usr/bin/claude-code" });
   assert.equal(resolveExecutorKind(config), "claude");
 });
+
+test("resolveExecutorKind prefers an explicit executorKind over binary inference", () => {
+  // Aliased binary that would otherwise misresolve to codex.
+  const config = createConfig({ codexBinary: "/usr/local/bin/oc", executorKind: "opencode" });
+  assert.equal(resolveExecutorKind(config), "opencode");
+});
+
+test("resolveExecutorKind explicit executorKind overrides a conflicting binary name", () => {
+  const config = createConfig({ codexBinary: "/usr/bin/opencode", executorKind: "codex" });
+  assert.equal(resolveExecutorKind(config), "codex");
+});
+
+test("resolveExecutorKind honors an explicit mock kind, making MockExecutor reachable via createExecutor", () => {
+  const config = createConfig({ codexBinary: "/usr/bin/custom-tool", executorKind: "mock" });
+  assert.equal(resolveExecutorKind(config), "mock");
+  assert.ok(createExecutor(config) instanceof MockExecutor);
+});
+
+test("CodexExecutor reports supportsResume=true for an aliased codex binary with explicit executorKind", () => {
+  // Aliased binary basename ("cx") would otherwise yield false capabilities.
+  const config = createConfig({ codexBinary: "/usr/local/bin/cx", executorKind: "codex" });
+  const executor = new CodexExecutor({ config });
+  assert.equal(executor.capabilities.supportsResume, true);
+  assert.equal(executor.capabilities.supportsStructuredResult, true);
+});

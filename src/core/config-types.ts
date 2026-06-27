@@ -148,6 +148,14 @@ export interface LatestLocalCiResult {
   verifier_drift_hint?: string | null;
 }
 
+/**
+ * Configured executor kind. Must mirror `ExecutorKind` in
+ * `src/executors/types.ts` (kept as a separate definition so core does not
+ * depend on the executors layer). `resolveExecutorKind` returns this value
+ * directly, so a structural mismatch surfaces as a compile error.
+ */
+export type ConfiguredExecutorKind = "codex" | "opencode" | "claude" | "mock";
+
 export interface SupervisorConfig {
   repoPath: string;
   repoSlug: string;
@@ -157,6 +165,12 @@ export interface SupervisorConfig {
   stateFile: string;
   stateBootstrapFile?: string;
   codexBinary: string;
+  /**
+   * Explicit executor selection. When set, it takes precedence over inferring
+   * the kind from `codexBinary`. When unset, the kind is inferred from the
+   * binary path for backward compatibility.
+   */
+  executorKind?: ConfiguredExecutorKind;
   trustMode?: TrustMode;
   executionSafetyMode?: ExecutionSafetyMode;
   codexModelStrategy: CodexModelStrategy;

@@ -198,6 +198,19 @@ test("detectOpenCodeCapabilities defaults to opencode when no config", () => {
   assert.equal(caps.supportsStructuredResult, true);
 });
 
+test("detectOpenCodeCapabilities honors an explicit executorKind for an aliased binary", () => {
+  const caps = detectOpenCodeCapabilities({ codexBinary: "/usr/local/bin/oc", executorKind: "opencode" });
+  assert.equal(caps.supportsResume, true);
+  assert.equal(caps.supportsStructuredResult, true);
+});
+
+test("OpenCodeExecutor reports supportsResume=true for an aliased binary with explicit executorKind", () => {
+  const config = createConfig({ codexBinary: "/usr/local/bin/oc", executorKind: "opencode" });
+  const executor = new OpenCodeExecutor({ config });
+  assert.equal(executor.capabilities.supportsResume, true);
+  assert.equal(executor.capabilities.supportsStructuredResult, true);
+});
+
 // ===== Behavioral parity tests =====
 
 test("OpenCodeExecutor delegates runTurn to underlying runner", async () => {

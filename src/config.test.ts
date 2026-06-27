@@ -214,6 +214,49 @@ test("loadConfig leaves bare codexBinary values unresolved for PATH lookup", asy
   assert.equal(config.stateFile, path.join(tempDir, "state.json"));
 });
 
+test("loadConfig parses an explicit executorKind, omits it when absent, and rejects invalid values", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const baseConfig: Record<string, unknown> = {
+    repoPath: ".",
+    repoSlug: "owner/repo",
+    defaultBranch: "main",
+    workspaceRoot: "./workspaces",
+    stateFile: "./state.json",
+    codexBinary: "codex",
+    branchPrefix: "codex/issue-",
+  };
+  const writeConfig = async (name: string, extra: Record<string, unknown>): Promise<string> => {
+    const configPath = path.join(tempDir, name);
+    await fs.writeFile(configPath, JSON.stringify({ ...baseConfig, ...extra }), "utf8");
+    return configPath;
+  };
+
+  const explicit = loadConfig(await writeConfig("explicit.json", { executorKind: "opencode" }));
+  assert.equal(explicit.executorKind, "opencode");
+
+  const absent = loadConfig(await writeConfig("absent.json", {}));
+  assert.equal(absent.executorKind, undefined);
+  assert.ok(!("executorKind" in absent), "executorKind key should be absent when unset");
+
+  const invalidPath = await writeConfig("invalid.json", { executorKind: "gpt" });
+  assert.throws(
+    () => loadConfig(invalidPath),
+    /Invalid config field: executorKind must be one of/,
+  );
+
+  // An explicit null must fail closed rather than silently inferring from the
+  // binary path (which could select the wrong executor for an aliased binary).
+  const nullPath = await writeConfig("null.json", { executorKind: null });
+  assert.throws(
+    () => loadConfig(nullPath),
+    /Invalid config field: executorKind must be one of/,
+  );
+});
+
 test("loadConfigSummary reports missing required fields without throwing", async (t) => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
   t.after(async () => {

@@ -203,6 +203,7 @@ interface ExecuteCodexTurnPhaseArgs {
     syncJournal: (record: IssueRunRecord) => Promise<void>;
     issueNumber: number;
     error: unknown;
+    failureKind?: "timeout" | "command_error";
     classifyFailure: (
       message: string | null | undefined,
     ) => "timeout" | "command_error";
@@ -522,6 +523,9 @@ export async function executeCodexTurnPhase(
             syncJournal,
             issueNumber: record.issue_number,
             error: new Error(message),
+            // Preserve the turn-boundary classification (which may be a
+            // flag-based timeout) instead of re-deriving it from the message.
+            failureKind: turnResult.failureKind,
             classifyFailure: args.classifyFailure,
             buildCodexFailureContext: args.buildCodexFailureContext,
             applyFailureSignature: args.applyFailureSignature,

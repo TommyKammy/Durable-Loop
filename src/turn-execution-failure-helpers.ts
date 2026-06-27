@@ -16,6 +16,12 @@ interface PersistTurnExecutionFailureArgs {
   syncJournal: (record: IssueRunRecord) => Promise<void>;
   issueNumber: number;
   error: unknown;
+  /**
+   * Pre-computed failure kind from the turn boundary. When provided it is used
+   * directly (preserving structured timeout detection); otherwise the kind is
+   * derived from the error message via `classifyFailure`.
+   */
+  failureKind?: "timeout" | "command_error";
   classifyFailure: (message: string | null | undefined) => "timeout" | "command_error";
   buildCodexFailureContext: (
     category: FailureContext["category"],
@@ -169,7 +175,7 @@ async function persistTurnFailurePatch(args: {
 
 export async function persistCodexTurnExecutionFailure(args: PersistTurnExecutionFailureArgs): Promise<IssueRunRecord> {
   const message = args.error instanceof Error ? args.error.stack ?? args.error.message : String(args.error);
-  const failureKind = args.classifyFailure(message);
+  const failureKind = args.failureKind ?? args.classifyFailure(message);
   const failureContext = args.buildCodexFailureContext(
     "codex",
     `Codex turn execution failed for issue #${args.issueNumber}.`,

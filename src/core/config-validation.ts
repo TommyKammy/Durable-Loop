@@ -32,14 +32,34 @@ function hasNonEmptyString(value: unknown): boolean {
   return typeof value === "string" && value.trim() !== "";
 }
 
+/**
+ * Collapse the executor-neutral `executorBinary` alias into the canonical
+ * `codexBinary` field so that every raw-document consumer (placeholder scan,
+ * required-field check, setup fields, parser) deals only with `codexBinary`.
+ *
+ * `codexBinary` keeps precedence: a usable `codexBinary` (non-empty and not a
+ * starter placeholder) is never overwritten, so setup-writer edits and explicit
+ * `codexBinary` values always win and a malformed alias cannot shadow them. The
+ * alias is promoted only when `codexBinary` is absent, empty, or still a
+ * placeholder, and is then removed from the document.
+ */
+export function normalizeConfigDocument(raw: Record<string, unknown>): Record<string, unknown> {
+  if (!("executorBinary" in raw)) {
+    return raw;
+  }
+  const normalized = { ...raw };
+  const codexBinaryUsable =
+    hasNonEmptyString(normalized.codexBinary) &&
+    !isStarterProfilePlaceholder("codexBinary", normalized.codexBinary);
+  if (!codexBinaryUsable && hasNonEmptyString(normalized.executorBinary)) {
+    normalized.codexBinary = normalized.executorBinary;
+  }
+  delete normalized.executorBinary;
+  return normalized;
+}
+
 export function collectMissingRequiredFields(raw: Record<string, unknown>): string[] {
   const missing = REQUIRED_STRING_CONFIG_FIELDS.filter((field) => !hasNonEmptyString(raw[field])) as string[];
-  // `executorBinary` is the executor-neutral alias for the required `codexBinary`
-  // field; a config that supplies only the neutral key is not missing the binary.
-  const codexBinaryIndex = missing.indexOf("codexBinary");
-  if (codexBinaryIndex !== -1 && hasNonEmptyString(raw.executorBinary)) {
-    missing.splice(codexBinaryIndex, 1);
-  }
   if ((raw.codexModelStrategy === "fixed" || raw.codexModelStrategy === "alias") && !hasNonEmptyString(raw.codexModel)) {
     missing.push("codexModel");
   }

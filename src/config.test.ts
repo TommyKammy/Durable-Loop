@@ -294,6 +294,21 @@ test("loadConfig accepts executorBinary as a backward-compatible alias for codex
   const malformed = loadConfig(await writeConfig("malformed.json", { executorBinary: "", codexBinary: "codex" }));
   assert.equal(malformed.codexBinary, "codex");
 
+  // A starter placeholder in executorBinary is rejected the same as codexBinary.
+  const placeholderAliasPath = await writeConfig("placeholder-alias.json", {
+    executorBinary: "/absolute/path/to/codex",
+  });
+  assert.throws(() => loadConfig(placeholderAliasPath), /codexBinary|executorBinary|placeholder/i);
+
+  // A real executorBinary overrides a leftover codexBinary starter placeholder.
+  const overridePlaceholder = loadConfig(
+    await writeConfig("override-placeholder.json", {
+      codexBinary: "/absolute/path/to/codex",
+      executorBinary: "opencode",
+    }),
+  );
+  assert.equal(overridePlaceholder.codexBinary, "opencode");
+
   // Neither present fails closed, naming both keys.
   const missingPath = await writeConfig("missing.json", {});
   assert.throws(() => loadConfig(missingPath), /executorBinary \(or codexBinary\)/);

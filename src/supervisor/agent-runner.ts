@@ -16,7 +16,7 @@ import type {
   RunState,
   SupervisorConfig,
 } from "../core/types";
-import { buildCodexFailureContext, classifyFailure } from "./supervisor-failure-helpers";
+import { buildCodexFailureContext, classifyFailure, classifyTurnError } from "./supervisor-failure-helpers";
 import { basename } from "node:path";
 import type { ExternalReviewMissContext } from "../external-review/external-review-misses";
 import type { DeterministicChangeClass } from "../issue-metadata";
@@ -238,7 +238,7 @@ export function createCodexAgentRunner(options: CreateCodexAgentRunnerOptions = 
           stderr: message,
           stdout: "",
           structuredResult: null,
-          failureKind: classifyFailureImpl(message),
+          failureKind: classifyTurnError(error, message, classifyFailureImpl),
           failureContext: buildFailureContextImpl("codex", "Codex turn execution failed.", [
             truncatePreservingStartAndEnd(message, 2000) ?? "Unknown failure",
           ]),

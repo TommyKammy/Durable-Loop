@@ -19,6 +19,7 @@ import type {
   AgentTurnResult,
 } from "../supervisor/agent-runner";
 import type { SupervisorConfig, RunState } from "../core/types";
+import { CommandExecutionError } from "../core/command";
 import {
   OpenCodeExecutor,
   detectOpenCodeCapabilities,
@@ -283,6 +284,24 @@ test("OpenCodeExecutor handles timeout errors with correct failure kind", async 
   assert.equal(result.failureKind, "timeout");
   assert.equal(result.structuredResult, null);
   assert.ok(result.failureContext !== null);
+});
+
+test("OpenCodeExecutor classifies a timed-out CommandExecutionError via the flag, not the message text", async () => {
+  const config = createConfig();
+  const executor = new OpenCodeExecutor({
+    config,
+    runTurnImpl: async () => {
+      // Innocuous message: the old substring classifier would return command_error.
+      throw new CommandExecutionError("opencode exited unexpectedly", {
+        exitCode: 1,
+        stdout: "",
+        stderr: "",
+        timedOut: true,
+      });
+    },
+  });
+  const result = await executor.runTurn(createStartContext(config));
+  assert.equal(result.failureKind, "timeout");
 });
 
 test("OpenCodeExecutor preserves sessionId for resume context", async () => {

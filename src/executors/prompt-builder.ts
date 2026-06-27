@@ -9,7 +9,7 @@
  * identical across all builders. Only the provider-specific phrases in the
  * prompt body are substituted by GenericPromptBuilder.
  *
- * Replacements performed by GenericPromptBuilder (5 unguarded phrases):
+ * Replacements performed by GenericPromptBuilder (4 unguarded phrases):
  * 1. "Codex Working Notes" → "<provider> Working Notes"
  * 2. "existing Codex session" → "existing <provider> session"
  * 3. "shared by Codex, CI agents" → "shared by <provider>, CI agents"
@@ -39,7 +39,7 @@ export class CodexPromptBuilder implements PromptBuilder {
 /**
  * Generic prompt builder — wraps buildCodexPrompt with provider-neutral language.
  *
- * Calls buildCodexPrompt and then replaces the 5 unguarded Codex-specific
+ * Calls buildCodexPrompt and then replaces the 4 unguarded Codex-specific
  * phrases with the provider name. The labeled footer format is preserved
  * exactly — only the prompt body language changes.
  *
@@ -58,7 +58,7 @@ export class GenericPromptBuilder implements PromptBuilder {
   }
 
   /**
-   * Replace the 5 unguarded Codex-specific phrases with the provider name.
+   * Replace the 4 unguarded Codex-specific phrases with the provider name.
    *
    * These replacements are safe because:
    * - "Codex Working Notes" is a unique phrase that doesn't appear in the

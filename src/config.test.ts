@@ -247,6 +247,14 @@ test("loadConfig parses an explicit executorKind, omits it when absent, and reje
     () => loadConfig(invalidPath),
     /Invalid config field: executorKind must be one of/,
   );
+
+  // An explicit null must fail closed rather than silently inferring from the
+  // binary path (which could select the wrong executor for an aliased binary).
+  const nullPath = await writeConfig("null.json", { executorKind: null });
+  assert.throws(
+    () => loadConfig(nullPath),
+    /Invalid config field: executorKind must be one of/,
+  );
 });
 
 test("loadConfigSummary reports missing required fields without throwing", async (t) => {

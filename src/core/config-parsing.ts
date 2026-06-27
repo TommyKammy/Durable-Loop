@@ -217,17 +217,18 @@ const VALID_EXECUTOR_KINDS: ReadonlySet<ConfiguredExecutorKind> = new Set([
 
 /**
  * Parse the optional explicit executor selection. Returns a spreadable object
- * so the key stays absent when unset (preserving backward-compatible config
- * shapes). An present-but-invalid value fails closed rather than silently
- * falling back to binary-path inference.
+ * so the key stays absent when omitted (preserving backward-compatible config
+ * shapes). Only an absent key falls back to binary-path inference; any present
+ * value — including `null` — that is not a supported kind fails closed, so a
+ * malformed explicit selection cannot silently run the wrong executor.
  */
 function parseExecutorKind(value: unknown): { executorKind?: ConfiguredExecutorKind } {
-  if (value === undefined || value === null) {
+  if (value === undefined) {
     return {};
   }
   if (typeof value !== "string" || !VALID_EXECUTOR_KINDS.has(value as ConfiguredExecutorKind)) {
     throw new Error(
-      `Invalid config field: executorKind must be one of ${[...VALID_EXECUTOR_KINDS].join(", ")}`,
+      `Invalid config field: executorKind must be one of ${[...VALID_EXECUTOR_KINDS].join(", ")} (omit the field to infer from the binary)`,
     );
   }
   return { executorKind: value as ConfiguredExecutorKind };

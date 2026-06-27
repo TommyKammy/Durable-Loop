@@ -506,3 +506,11 @@ test("resolveExecutorKind honors an explicit mock kind, making MockExecutor reac
   assert.equal(resolveExecutorKind(config), "mock");
   assert.ok(createExecutor(config) instanceof MockExecutor);
 });
+
+test("CodexExecutor reports supportsResume=true for an aliased codex binary with explicit executorKind", () => {
+  // Aliased binary basename ("cx") would otherwise yield false capabilities.
+  const config = createConfig({ codexBinary: "/usr/local/bin/cx", executorKind: "codex" });
+  const executor = new CodexExecutor({ config });
+  assert.equal(executor.capabilities.supportsResume, true);
+  assert.equal(executor.capabilities.supportsStructuredResult, true);
+});

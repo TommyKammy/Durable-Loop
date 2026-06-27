@@ -226,6 +226,7 @@ export function shouldAutoRecoverFailedNoPr(
     record.state === "failed" &&
     record.pr_number === null &&
     record.last_failure_kind !== "codex_failed" &&
+    record.last_failure_kind !== "executor_failed" &&
     (record.stale_stabilizing_no_pr_recovery_count ?? 0) < staleNoPrRepeatLimit
   );
 }

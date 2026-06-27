@@ -214,7 +214,7 @@ export class OpenCodeExecutor implements Executor {
       classifyFailureImpl: options.classifyFailureImpl,
       buildFailureContextImpl: options.buildFailureContextImpl,
       exitFailureKind: "command_error",
-      failureCategory: "codex", // Reuse existing category for backward compat
+      failureCategory: "executor", // Executor-neutral category (not Codex-specific)
       providerName: "OpenCode",
       promptBuilder: options.promptBuilder ?? new GenericPromptBuilder("OpenCode"),
     });

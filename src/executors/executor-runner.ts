@@ -273,7 +273,7 @@ export function createExecutorAgentRunner(
   const classifyFailureImpl = options.classifyFailureImpl ?? classifyFailure;
   const buildFailureContextImpl = options.buildFailureContextImpl ?? buildCodexFailureContext;
   const exitFailureKind = options.exitFailureKind ?? "command_error";
-  const failureCategory = options.failureCategory ?? "codex";
+  const failureCategory = options.failureCategory ?? "executor";
   const providerName = options.providerName;
   const promptBuilder = options.promptBuilder;
 

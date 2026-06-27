@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { runCommand } from "./core/command";
-import { classifyFailedNoPrBranchRecovery } from "./recovery-support";
+import { classifyFailedNoPrBranchRecovery, shouldAutoRecoverFailedNoPr } from "./recovery-support";
 import { createConfig, createRecord } from "./turn-execution-test-helpers";
 
 async function createRepositoryWithOrigin(): Promise<{ repoPath: string; workspaceRoot: string }> {
@@ -160,4 +160,29 @@ test("classifyFailedNoPrBranchRecovery does not treat untracked-only workspace f
     headSha,
     preservedTrackedFiles: [],
   });
+});
+
+test("shouldAutoRecoverFailedNoPr excludes both codex_failed and executor_failed terminal failures", () => {
+  const config = createConfig();
+  const base = {
+    state: "failed" as const,
+    pr_number: null,
+    stale_stabilizing_no_pr_recovery_count: 0,
+  };
+
+  // A recoverable failed no-PR record (a non-terminal failure kind).
+  assert.equal(
+    shouldAutoRecoverFailedNoPr(createRecord({ ...base, last_failure_kind: "command_error" }), config),
+    true,
+  );
+  // Terminal executor-reported failures must not be auto-recovered, for either
+  // the Codex value or the executor-neutral value.
+  assert.equal(
+    shouldAutoRecoverFailedNoPr(createRecord({ ...base, last_failure_kind: "codex_failed" }), config),
+    false,
+  );
+  assert.equal(
+    shouldAutoRecoverFailedNoPr(createRecord({ ...base, last_failure_kind: "executor_failed" }), config),
+    false,
+  );
 });

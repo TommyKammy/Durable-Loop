@@ -128,13 +128,27 @@ export interface ReviewLoopRetryStateEntry {
   last_attempted_at: string;
 }
 
-export type FailureKind = "timeout" | "command_error" | "codex_exit" | "codex_failed" | null;
+// `executor_exit`/`executor_failed` are the executor-neutral names. The legacy
+// `codex_exit`/`codex_failed` values are retained as read-time-compatible
+// aliases (they remain valid in existing persisted state, metrics, and replay
+// corpora) and stay accurate for the Codex executor path.
+export type FailureKind =
+  | "timeout"
+  | "command_error"
+  | "executor_exit"
+  | "executor_failed"
+  | "codex_exit"
+  | "codex_failed"
+  | null;
 export type CommentIdentityStatus = "available" | "unavailable" | null;
 
+// `executor` is the executor-neutral category; the legacy `codex` value is kept
+// as a read-time-compatible alias and stays accurate for the Codex path.
 export type FailureContextCategory =
   | "checks"
   | "review"
   | "conflict"
+  | "executor"
   | "codex"
   | "manual"
   | "blocked"

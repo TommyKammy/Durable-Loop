@@ -44,10 +44,12 @@ import type { PromptBuilder } from "./types";
  * Detect OpenCode CLI capabilities from the binary name.
  */
 export function detectOpenCodeCapabilities(
-  config?: Pick<SupervisorConfig, "codexBinary"> | null,
+  config?: Pick<SupervisorConfig, "codexBinary" | "executorKind"> | null,
 ): { supportsResume: boolean; supportsStructuredResult: boolean } {
+  // An explicit executorKind proves the provider even when the binary is an
+  // alias (e.g. "/usr/local/bin/oc"); otherwise fall back to the binary name.
   const binaryName = basename(config?.codexBinary ?? "opencode").toLowerCase();
-  const looksLikeOpenCode = binaryName.includes("opencode");
+  const looksLikeOpenCode = config?.executorKind === "opencode" || binaryName.includes("opencode");
 
   return {
     supportsResume: looksLikeOpenCode,

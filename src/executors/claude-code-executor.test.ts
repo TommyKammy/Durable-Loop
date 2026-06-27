@@ -204,6 +204,19 @@ test("detectClaudeCodeCapabilities defaults to claude when no config", () => {
   assert.equal(caps.supportsStructuredResult, true);
 });
 
+test("detectClaudeCodeCapabilities honors an explicit executorKind for an aliased binary", () => {
+  const caps = detectClaudeCodeCapabilities({ codexBinary: "/usr/local/bin/cc", executorKind: "claude" });
+  assert.equal(caps.supportsResume, true);
+  assert.equal(caps.supportsStructuredResult, true);
+});
+
+test("ClaudeCodeExecutor reports supportsResume=true for an aliased binary with explicit executorKind", () => {
+  const config = createConfig({ codexBinary: "/usr/local/bin/cc", executorKind: "claude" });
+  const executor = new ClaudeCodeExecutor({ config });
+  assert.equal(executor.capabilities.supportsResume, true);
+  assert.equal(executor.capabilities.supportsStructuredResult, true);
+});
+
 // ===== Behavioral parity tests =====
 
 test("ClaudeCodeExecutor delegates runTurn to underlying runner", async () => {

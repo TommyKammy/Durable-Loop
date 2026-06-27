@@ -43,10 +43,12 @@ import type { PromptBuilder } from "./types";
  * Detect Claude Code CLI capabilities from the binary name.
  */
 export function detectClaudeCodeCapabilities(
-  config?: Pick<SupervisorConfig, "codexBinary"> | null,
+  config?: Pick<SupervisorConfig, "codexBinary" | "executorKind"> | null,
 ): { supportsResume: boolean; supportsStructuredResult: boolean } {
+  // An explicit executorKind proves the provider even when the binary is an
+  // alias; otherwise fall back to the binary name.
   const binaryName = basename(config?.codexBinary ?? "claude").toLowerCase();
-  const looksLikeClaude = binaryName.includes("claude");
+  const looksLikeClaude = config?.executorKind === "claude" || binaryName.includes("claude");
 
   return {
     supportsResume: looksLikeClaude,

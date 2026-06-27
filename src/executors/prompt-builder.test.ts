@@ -3,7 +3,7 @@
  *
  * Verifies:
  * - CodexPromptBuilder produces identical output to buildCodexPrompt
- * - GenericPromptBuilder replaces the 5 unguarded Codex-specific phrases
+ * - GenericPromptBuilder replaces the 4 unguarded Codex-specific phrases
  * - GenericPromptBuilder preserves the labeled footer format exactly
  * - GenericPromptBuilder does NOT replace guarded "Codex Connector" phrases
  * - createPromptBuilder factory returns the correct builder type
@@ -317,4 +317,39 @@ test("Resume prompt footers are identical between builders", () => {
   const genericFooter = genericPrompt.substring(genericPrompt.indexOf(footerStart));
 
   assert.equal(codexFooter, genericFooter);
+});
+
+// ===== Completeness invariant =====
+//
+// Locks the contract that GenericPromptBuilder's phrase list is exhaustive:
+// no executor-identity "Codex" token may survive in the rendered prompt. The
+// only allowed "Codex" is the guarded "Codex Connector" (the review-provider
+// system), which is stripped before the assertion. This would have caught the
+// earlier "5 phrases" miscount, and guards against future prompt edits that
+// introduce a new Codex-branded phrase without a matching replacement.
+
+test("GenericPromptBuilder leaves no unreplaced executor-identity Codex token", () => {
+  const config = createConfig();
+  // A start context that triggers every replaced phrase at once:
+  // "Codex Working Notes" (always), "shared by Codex, CI agents" (memory files),
+  // and "Previous Codex summary" (previousSummary).
+  const richStart = {
+    ...createContextWithMemoryFiles(config),
+    previousSummary: "Prior turn summary",
+    journalExcerpt: "## Working Notes\n- Next step: continue",
+  } as AgentTurnContext;
+  // A resume context triggers "existing Codex session" and the resume handoff.
+  const resume = createResumeContext(config);
+
+  for (const provider of ["OpenCode", "Claude Code"]) {
+    for (const context of [richStart, resume]) {
+      const prompt = new GenericPromptBuilder(provider).buildPrompt(context);
+      const withoutGuarded = prompt.replace(/Codex Connector/g, "");
+      assert.doesNotMatch(
+        withoutGuarded,
+        /\bCodex\b/,
+        `GenericPromptBuilder("${provider}") leaked an unreplaced Codex identity phrase`,
+      );
+    }
+  }
 });

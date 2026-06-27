@@ -285,12 +285,12 @@ test("loadConfig accepts executorBinary as a backward-compatible alias for codex
   const legacy = loadConfig(await writeConfig("legacy.json", { codexBinary: "codex" }));
   assert.equal(legacy.codexBinary, "codex");
 
-  // codexBinary is canonical and wins when both are present, so setup-writer
-  // edits (which target codexBinary) always take effect.
+  // executorBinary is the preferred key, so a usable one wins even when a legacy
+  // codexBinary is still present (the common migration case is not ignored).
   const both = loadConfig(await writeConfig("both.json", { executorBinary: "opencode", codexBinary: "codex" }));
-  assert.equal(both.codexBinary, "codex");
+  assert.equal(both.codexBinary, "opencode");
 
-  // A malformed executorBinary cannot shadow a valid codexBinary.
+  // A malformed (empty) executorBinary falls back to a valid codexBinary.
   const malformed = loadConfig(await writeConfig("malformed.json", { executorBinary: "", codexBinary: "codex" }));
   assert.equal(malformed.codexBinary, "codex");
 

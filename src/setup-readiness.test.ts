@@ -1283,8 +1283,42 @@ test("diagnoseSetupReadiness surfaces an invalid config field that is not a regi
   });
 
   assert.equal(report.ready, false);
+  assert.equal(report.overallStatus, "invalid");
   assert.ok(
     report.blockers.some((blocker) => blocker.code === "invalid_config_field_executorKind"),
     "expected a generic blocker for the invalid executorKind field",
+  );
+});
+
+test("diagnoseSetupReadiness does not double-block the binary when both codexBinary and executorBinary are absent", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-setup-readiness-"));
+  t.after(async () => {
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  const configPath = path.join(root, "supervisor.config.json");
+  await fs.writeFile(
+    configPath,
+    JSON.stringify({
+      repoPath: ".",
+      repoSlug: "owner/repo",
+      defaultBranch: "main",
+      workspaceRoot: "./workspaces",
+      stateFile: "./state.json",
+      branchPrefix: "codex/issue-",
+      // Neither codexBinary nor its executorBinary alias is set.
+    }),
+    "utf8",
+  );
+
+  const report = await diagnoseSetupReadiness({
+    configPath,
+    authStatus: async () => ({ ok: true, message: "ok" }),
+  });
+
+  // The missing-binary blocker covers the alias; no second executorBinary blocker.
+  assert.equal(
+    report.blockers.filter((blocker) => blocker.code === "invalid_config_field_executorBinary").length,
+    0,
   );
 });

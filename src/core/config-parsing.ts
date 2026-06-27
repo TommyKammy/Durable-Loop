@@ -235,17 +235,19 @@ function parseExecutorKind(value: unknown): { executorKind?: ConfiguredExecutorK
 }
 
 /**
- * Resolve the executor binary path. `executorBinary` is the preferred,
- * executor-neutral key; `codexBinary` is accepted as a backward-compatible
- * alias. A valid `executorBinary` wins; otherwise `codexBinary` is required.
+ * Resolve the executor binary path. `codexBinary` is the canonical field and
+ * takes precedence; `executorBinary` is accepted as an executor-neutral alias
+ * only when `codexBinary` is not set, so operators are not forced into the
+ * Codex-named key. Keeping `codexBinary` canonical means setup-writer edits
+ * (which target `codexBinary`) always take effect and a malformed
+ * `executorBinary` cannot shadow a valid `codexBinary`.
  */
 function resolveExecutorBinaryConfigValue(raw: Record<string, unknown>): string {
-  const executorBinary = raw.executorBinary;
-  if (typeof executorBinary === "string" && executorBinary.trim() !== "") {
-    return executorBinary;
+  if (typeof raw.codexBinary === "string" && raw.codexBinary.trim() !== "") {
+    return raw.codexBinary;
   }
-  if (executorBinary !== undefined && executorBinary !== null) {
-    throw new Error("Missing or invalid config field: executorBinary");
+  if (typeof raw.executorBinary === "string" && raw.executorBinary.trim() !== "") {
+    return raw.executorBinary;
   }
   return assertString(raw.codexBinary, "executorBinary (or codexBinary)");
 }

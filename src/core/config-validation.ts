@@ -34,6 +34,12 @@ function hasNonEmptyString(value: unknown): boolean {
 
 export function collectMissingRequiredFields(raw: Record<string, unknown>): string[] {
   const missing = REQUIRED_STRING_CONFIG_FIELDS.filter((field) => !hasNonEmptyString(raw[field])) as string[];
+  // `executorBinary` is the executor-neutral alias for the required `codexBinary`
+  // field; a config that supplies only the neutral key is not missing the binary.
+  const codexBinaryIndex = missing.indexOf("codexBinary");
+  if (codexBinaryIndex !== -1 && hasNonEmptyString(raw.executorBinary)) {
+    missing.splice(codexBinaryIndex, 1);
+  }
   if ((raw.codexModelStrategy === "fixed" || raw.codexModelStrategy === "alias") && !hasNonEmptyString(raw.codexModel)) {
     missing.push("codexModel");
   }

@@ -285,18 +285,23 @@ test("loadConfig accepts executorBinary as a backward-compatible alias for codex
   const legacy = loadConfig(await writeConfig("legacy.json", { codexBinary: "codex" }));
   assert.equal(legacy.codexBinary, "codex");
 
-  // When both are present, the neutral executorBinary wins.
+  // codexBinary is canonical and wins when both are present, so setup-writer
+  // edits (which target codexBinary) always take effect.
   const both = loadConfig(await writeConfig("both.json", { executorBinary: "opencode", codexBinary: "codex" }));
-  assert.equal(both.codexBinary, "opencode");
+  assert.equal(both.codexBinary, "codex");
+
+  // A malformed executorBinary cannot shadow a valid codexBinary.
+  const malformed = loadConfig(await writeConfig("malformed.json", { executorBinary: "", codexBinary: "codex" }));
+  assert.equal(malformed.codexBinary, "codex");
 
   // Neither present fails closed, naming both keys.
   const missingPath = await writeConfig("missing.json", {});
   assert.throws(() => loadConfig(missingPath), /executorBinary \(or codexBinary\)/);
 
-  // A present-but-empty executorBinary fails closed rather than silently
-  // falling back to codexBinary.
-  const emptyPath = await writeConfig("empty.json", { executorBinary: "", codexBinary: "codex" });
-  assert.throws(() => loadConfig(emptyPath), /Missing or invalid config field: executorBinary/);
+  // loadConfigSummary must not report a missing codexBinary when only the
+  // neutral executorBinary key is supplied.
+  const summary = loadConfigSummary(await writeConfig("summary.json", { executorBinary: "opencode" }));
+  assert.ok(!summary.missingRequiredFields.includes("codexBinary"));
 });
 
 test("loadConfigSummary reports missing required fields without throwing", async (t) => {

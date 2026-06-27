@@ -17,7 +17,6 @@ import type {
   SupervisorConfig,
 } from "../core/types";
 import type { PromptBuilder } from "./types";
-import { CodexPromptBuilder } from "./prompt-builder";
 import { parseAgentTurnStructuredResult } from "../supervisor/agent-runner";
 import { buildCodexFailureContext, classifyFailure, classifyTurnError } from "../supervisor/supervisor-failure-helpers";
 import type {
@@ -247,10 +246,13 @@ export interface CreateExecutorRunnerOptions {
   providerName: string;
   /**
    * Prompt builder for constructing the supervisor prompt.
-   * Defaults to CodexPromptBuilder (passthrough to buildCodexPrompt).
-   * Non-Codex executors should pass a GenericPromptBuilder.
+   *
+   * Required: this provider-neutral runner has no safe default, so every
+   * executor must pass its own builder (e.g. a GenericPromptBuilder for a
+   * non-Codex provider). Defaulting here would silently emit Codex-branded
+   * prompts for a provider that forgot to supply one.
    */
-  promptBuilder?: PromptBuilder;
+  promptBuilder: PromptBuilder;
 }
 
 /**
@@ -273,7 +275,7 @@ export function createExecutorAgentRunner(
   const exitFailureKind = options.exitFailureKind ?? "command_error";
   const failureCategory = options.failureCategory ?? "codex";
   const providerName = options.providerName;
-  const promptBuilder = options.promptBuilder ?? new CodexPromptBuilder();
+  const promptBuilder = options.promptBuilder;
 
   return {
     capabilities: options.capabilities,

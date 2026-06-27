@@ -16,6 +16,7 @@ import {
   summarizeLocalCiContract,
 } from "./core/config";
 import type { LocalCiContractSummary, SupervisorConfig } from "./core/config-types";
+import { resolveExecutorTurnTimeoutMinutes } from "./core/config-types";
 import type { GitHubIssue } from "./core/types";
 import { lintExecutionReadyIssueBody, validateIssueMetadataSyntax } from "./issue-metadata";
 import { buildSetupConfigPreview } from "./setup-config-preview";
@@ -317,6 +318,49 @@ test("loadConfig accepts executorBinary as a backward-compatible alias for codex
   // neutral executorBinary key is supplied.
   const summary = loadConfigSummary(await writeConfig("summary.json", { executorBinary: "opencode" }));
   assert.ok(!summary.missingRequiredFields.includes("codexBinary"));
+});
+
+test("resolveExecutorTurnTimeoutMinutes prefers the per-executor override else the shared timeout", () => {
+  assert.equal(
+    resolveExecutorTurnTimeoutMinutes({ executorTimeoutMinutes: 15, codexExecTimeoutMinutes: 30 }),
+    15,
+  );
+  assert.equal(resolveExecutorTurnTimeoutMinutes({ codexExecTimeoutMinutes: 30 }), 30);
+});
+
+test("loadConfig parses executorTimeoutMinutes (present/absent/invalid)", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const baseConfig: Record<string, unknown> = {
+    repoPath: ".",
+    repoSlug: "owner/repo",
+    defaultBranch: "main",
+    workspaceRoot: "./workspaces",
+    stateFile: "./state.json",
+    codexBinary: "codex",
+    branchPrefix: "codex/issue-",
+  };
+  const writeConfig = async (name: string, extra: Record<string, unknown>): Promise<string> => {
+    const configPath = path.join(tempDir, name);
+    await fs.writeFile(configPath, JSON.stringify({ ...baseConfig, ...extra }), "utf8");
+    return configPath;
+  };
+
+  const withOverride = loadConfig(await writeConfig("override.json", { executorTimeoutMinutes: 10 }));
+  assert.equal(withOverride.executorTimeoutMinutes, 10);
+  assert.equal(resolveExecutorTurnTimeoutMinutes(withOverride), 10);
+
+  const without = loadConfig(await writeConfig("default.json", {}));
+  assert.equal(without.executorTimeoutMinutes, undefined);
+  assert.ok(!("executorTimeoutMinutes" in without), "absent override should not appear in the parsed config");
+  assert.equal(resolveExecutorTurnTimeoutMinutes(without), without.codexExecTimeoutMinutes);
+
+  // Non-positive / invalid values are ignored (fall back to the shared timeout).
+  const invalid = loadConfig(await writeConfig("invalid.json", { executorTimeoutMinutes: 0 }));
+  assert.equal(invalid.executorTimeoutMinutes, undefined);
 });
 
 test("loadConfigSummary reports missing required fields without throwing", async (t) => {

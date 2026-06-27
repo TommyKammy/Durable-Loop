@@ -723,6 +723,9 @@ export function parseSupervisorConfigDocument(raw: Record<string, unknown>, reso
       typeof raw.codexExecTimeoutMinutes === "number" && raw.codexExecTimeoutMinutes > 0
         ? raw.codexExecTimeoutMinutes
         : 30,
+    ...(typeof raw.executorTimeoutMinutes === "number" && raw.executorTimeoutMinutes > 0
+      ? { executorTimeoutMinutes: raw.executorTimeoutMinutes }
+      : {}),
     maxCodexAttemptsPerIssue:
       typeof raw.maxCodexAttemptsPerIssue === "number" && raw.maxCodexAttemptsPerIssue > 0
         ? raw.maxCodexAttemptsPerIssue

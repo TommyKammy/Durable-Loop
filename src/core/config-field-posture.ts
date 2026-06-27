@@ -102,6 +102,7 @@ const CONFIG_FIELD_POSTURE_METADATA_ENTRIES = [
   advanced("codexConnectorReviewRequestRetryLimit", "Codex Connector review request retry limit."),
   advanced("codexConnectorReviewRequestRetryMode", "Codex Connector review request retry comment mode."),
   advanced("codexExecTimeoutMinutes", "Codex turn timeout."),
+  advanced("executorTimeoutMinutes", "Per-executor turn timeout override."),
   advanced("maxCodexAttemptsPerIssue", "Legacy per-issue Codex attempt limit."),
   advanced("maxImplementationAttemptsPerIssue", "Implementation attempt limit."),
   advanced("maxRepairAttemptsPerIssue", "Repair attempt limit."),

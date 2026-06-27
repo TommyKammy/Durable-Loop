@@ -4,6 +4,7 @@ import path from "node:path";
 import { runCommand } from "../core/command";
 import { buildCodexConfigOverrideArgs, buildCodexExecutionSafetyArgs, resolveCodexExecutionPolicy } from "./codex-policy";
 import { CodexTurnResult, IssueRunRecord, RunState, SupervisorConfig } from "../core/types";
+import { resolveExecutorTurnTimeoutMinutes } from "../core/config-types";
 
 function extractSessionId(stdout: string, sessionId?: string | null): string | null {
   let resolvedSessionId = sessionId ?? null;
@@ -81,7 +82,7 @@ export async function runCodexTurn(
           npm_config_yes: "true",
           CI: "1",
         },
-        timeoutMs: config.codexExecTimeoutMinutes * 60_000,
+        timeoutMs: resolveExecutorTurnTimeoutMinutes(config) * 60_000,
       },
     );
 

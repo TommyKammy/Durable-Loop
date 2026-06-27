@@ -19,7 +19,7 @@ import type {
 import type { PromptBuilder } from "./types";
 import { CodexPromptBuilder } from "./prompt-builder";
 import { parseAgentTurnStructuredResult } from "../supervisor/agent-runner";
-import { buildCodexFailureContext, classifyFailure } from "../supervisor/supervisor-failure-helpers";
+import { buildCodexFailureContext, classifyFailure, classifyTurnError } from "../supervisor/supervisor-failure-helpers";
 import type {
   AgentRunner,
   AgentRunnerCapabilities,
@@ -330,7 +330,7 @@ export function createExecutorAgentRunner(
           stderr: message,
           stdout: "",
           structuredResult: null,
-          failureKind: classifyFailureImpl(message),
+          failureKind: classifyTurnError(error, message, classifyFailureImpl),
           failureContext: buildFailureContextImpl(
             failureCategory,
             `${providerName} turn execution failed.`,

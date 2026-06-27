@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import test, { mock } from "node:test";
-import { persistCodexTurnExitFailure, persistHintedCodexTurnState } from "./turn-execution-failure-helpers";
+import {
+  persistCodexTurnExecutionFailure,
+  persistCodexTurnExitFailure,
+  persistHintedCodexTurnState,
+} from "./turn-execution-failure-helpers";
 import { SupervisorStateFile } from "./core/types";
 import { createRecord } from "./turn-execution-test-helpers";
 
@@ -259,4 +263,110 @@ test("persistCodexTurnExitFailure skips issue-definition freshness when labels a
   assert.equal(updated.state, "failed");
   assert.equal(updated.issue_definition_fingerprint, "existing-fingerprint");
   assert.equal(updated.issue_definition_updated_at, "2026-03-24T02:59:00Z");
+});
+
+const failureContextStub = (
+  category: "checks" | "review" | "conflict" | "codex" | "manual" | "blocked" | null,
+  summary: string,
+  details: string[],
+) => ({
+  category,
+  summary,
+  signature: null,
+  command: null,
+  details,
+  url: null,
+  updated_at: "2026-03-24T03:15:00Z",
+});
+
+const messageClassifier = (message: string | null | undefined): "timeout" | "command_error" =>
+  (message ?? "").includes("Command timed out after") ? "timeout" : "command_error";
+
+test("persistCodexTurnExecutionFailure honors a pre-computed timeout kind over the message classifier", async () => {
+  const state: SupervisorStateFile = {
+    activeIssueNumber: 105,
+    issues: {
+      "105": createRecord({ issue_number: 105, state: "stabilizing", timeout_retry_count: 0 }),
+    },
+  };
+
+  const updated = await persistCodexTurnExecutionFailure({
+    stateStore: {
+      touch: (record, patch) => ({ ...record, ...patch, updated_at: "2026-03-24T03:15:00Z" }),
+      save: async () => undefined,
+    },
+    state,
+    record: state.issues["105"]!,
+    issue: { createdAt: "2026-03-24T03:00:00Z" },
+    syncJournal: async () => undefined,
+    issueNumber: 105,
+    // Innocuous message: the classifier alone would say command_error.
+    error: new Error("opencode exited unexpectedly"),
+    failureKind: "timeout",
+    classifyFailure: messageClassifier,
+    buildCodexFailureContext: failureContextStub,
+    applyFailureSignature: () => ({ last_failure_signature: null, repeated_failure_signature_count: 0 }),
+  });
+
+  assert.equal(updated.last_failure_kind, "timeout");
+  assert.equal(updated.timeout_retry_count, 1);
+});
+
+test("persistCodexTurnExecutionFailure falls back to the message classifier when no kind is provided", async () => {
+  const state: SupervisorStateFile = {
+    activeIssueNumber: 106,
+    issues: {
+      "106": createRecord({ issue_number: 106, state: "stabilizing", timeout_retry_count: 0 }),
+    },
+  };
+
+  const updated = await persistCodexTurnExecutionFailure({
+    stateStore: {
+      touch: (record, patch) => ({ ...record, ...patch, updated_at: "2026-03-24T03:15:00Z" }),
+      save: async () => undefined,
+    },
+    state,
+    record: state.issues["106"]!,
+    issue: { createdAt: "2026-03-24T03:00:00Z" },
+    syncJournal: async () => undefined,
+    issueNumber: 106,
+    error: new Error("opencode exited unexpectedly"),
+    classifyFailure: messageClassifier,
+    buildCodexFailureContext: failureContextStub,
+    applyFailureSignature: () => ({ last_failure_signature: null, repeated_failure_signature_count: 0 }),
+  });
+
+  assert.equal(updated.last_failure_kind, "command_error");
+  assert.equal(updated.timeout_retry_count, 0);
+});
+
+test("persistCodexTurnExecutionFailure recovers a message-only timeout via the classifier fallback", async () => {
+  // Mirrors the call-site behavior where a non-throwing non-zero exit
+  // (failureKind command_error) passes no precomputed kind, so a legacy
+  // "Command timed out after" summary in the output is still classified.
+  const state: SupervisorStateFile = {
+    activeIssueNumber: 107,
+    issues: {
+      "107": createRecord({ issue_number: 107, state: "stabilizing", timeout_retry_count: 0 }),
+    },
+  };
+
+  const updated = await persistCodexTurnExecutionFailure({
+    stateStore: {
+      touch: (record, patch) => ({ ...record, ...patch, updated_at: "2026-03-24T03:15:00Z" }),
+      save: async () => undefined,
+    },
+    state,
+    record: state.issues["107"]!,
+    issue: { createdAt: "2026-03-24T03:00:00Z" },
+    syncJournal: async () => undefined,
+    issueNumber: 107,
+    error: new Error("Command timed out after 1800000ms: opencode run"),
+    classifyFailure: messageClassifier,
+    buildCodexFailureContext: failureContextStub,
+    applyFailureSignature: () => ({ last_failure_signature: null, repeated_failure_signature_count: 0 }),
+  });
+
+  assert.equal(updated.last_failure_kind, "timeout");
+  assert.equal(updated.timeout_retry_count, 1);
 });

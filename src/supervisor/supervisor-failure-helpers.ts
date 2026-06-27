@@ -1,4 +1,5 @@
 import { GitHubClient } from "../github";
+import { CommandExecutionError } from "../core/command";
 import { StateStore } from "../core/state-store";
 import {
   FailureContext,
@@ -20,6 +21,29 @@ type FailureHelperStateStore = Pick<StateStore, "save" | "touch">;
 
 export function classifyFailure(message: string | null | undefined): "timeout" | "command_error" {
   return message?.includes("Command timed out after") ? "timeout" : "command_error";
+}
+
+/**
+ * Classify a thrown turn error.
+ *
+ * Prefers the structured `timedOut` flag from `CommandExecutionError` over
+ * fragile message-substring matching: the substring approach depends on the
+ * exact wording of the timeout message and on that text surviving in whatever
+ * string the caller derives from the error. When the error is not a timed-out
+ * `CommandExecutionError`, falls back to the message-based classifier (which may
+ * be an injected override).
+ */
+export function classifyTurnError(
+  error: unknown,
+  message: string | null | undefined,
+  classifyFailureImpl: (
+    message: string | null | undefined,
+  ) => "timeout" | "command_error" = classifyFailure,
+): "timeout" | "command_error" {
+  if (error instanceof CommandExecutionError && error.timedOut) {
+    return "timeout";
+  }
+  return classifyFailureImpl(message);
 }
 
 export function normalizeBlockerSignature(message: string | null | undefined): string | null {

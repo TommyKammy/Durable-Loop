@@ -257,6 +257,48 @@ test("loadConfig parses an explicit executorKind, omits it when absent, and reje
   );
 });
 
+test("loadConfig accepts executorBinary as a backward-compatible alias for codexBinary", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const baseConfig: Record<string, unknown> = {
+    repoPath: ".",
+    repoSlug: "owner/repo",
+    defaultBranch: "main",
+    workspaceRoot: "./workspaces",
+    stateFile: "./state.json",
+    branchPrefix: "codex/issue-",
+  };
+  const writeConfig = async (name: string, extra: Record<string, unknown>): Promise<string> => {
+    const configPath = path.join(tempDir, name);
+    await fs.writeFile(configPath, JSON.stringify({ ...baseConfig, ...extra }), "utf8");
+    return configPath;
+  };
+
+  // executorBinary alone populates the (internal) codexBinary field.
+  const neutral = loadConfig(await writeConfig("neutral.json", { executorBinary: "opencode" }));
+  assert.equal(neutral.codexBinary, "opencode");
+
+  // codexBinary still works on its own (backward compatible).
+  const legacy = loadConfig(await writeConfig("legacy.json", { codexBinary: "codex" }));
+  assert.equal(legacy.codexBinary, "codex");
+
+  // When both are present, the neutral executorBinary wins.
+  const both = loadConfig(await writeConfig("both.json", { executorBinary: "opencode", codexBinary: "codex" }));
+  assert.equal(both.codexBinary, "opencode");
+
+  // Neither present fails closed, naming both keys.
+  const missingPath = await writeConfig("missing.json", {});
+  assert.throws(() => loadConfig(missingPath), /executorBinary \(or codexBinary\)/);
+
+  // A present-but-empty executorBinary fails closed rather than silently
+  // falling back to codexBinary.
+  const emptyPath = await writeConfig("empty.json", { executorBinary: "", codexBinary: "codex" });
+  assert.throws(() => loadConfig(emptyPath), /Missing or invalid config field: executorBinary/);
+});
+
 test("loadConfigSummary reports missing required fields without throwing", async (t) => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
   t.after(async () => {

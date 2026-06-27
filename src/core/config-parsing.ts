@@ -234,6 +234,22 @@ function parseExecutorKind(value: unknown): { executorKind?: ConfiguredExecutorK
   return { executorKind: value as ConfiguredExecutorKind };
 }
 
+/**
+ * Resolve the executor binary path. `executorBinary` is the preferred,
+ * executor-neutral key; `codexBinary` is accepted as a backward-compatible
+ * alias. A valid `executorBinary` wins; otherwise `codexBinary` is required.
+ */
+function resolveExecutorBinaryConfigValue(raw: Record<string, unknown>): string {
+  const executorBinary = raw.executorBinary;
+  if (typeof executorBinary === "string" && executorBinary.trim() !== "") {
+    return executorBinary;
+  }
+  if (executorBinary !== undefined && executorBinary !== null) {
+    throw new Error("Missing or invalid config field: executorBinary");
+  }
+  return assertString(raw.codexBinary, "executorBinary (or codexBinary)");
+}
+
 function assertPattern(value: string, label: string, pattern: RegExp): string {
   if (!pattern.test(value)) {
     throw new Error(`Invalid config field: ${label}`);
@@ -467,7 +483,7 @@ export function parseSupervisorConfigDocument(raw: Record<string, unknown>, reso
       typeof raw.stateBootstrapFile === "string" && raw.stateBootstrapFile.trim() !== ""
         ? resolveMaybeRelative(configDir, raw.stateBootstrapFile)
         : undefined,
-    codexBinary: resolveCommandLikeValue(configDir, assertString(raw.codexBinary, "codexBinary")),
+    codexBinary: resolveCommandLikeValue(configDir, resolveExecutorBinaryConfigValue(raw)),
     ...parseExecutorKind(raw.executorKind),
     trustMode:
       typeof raw.trustMode === "string" && VALID_TRUST_MODES.has(raw.trustMode as TrustMode)

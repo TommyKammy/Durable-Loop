@@ -257,6 +257,68 @@ test("loadConfig parses an explicit executorKind, omits it when absent, and reje
   );
 });
 
+test("loadConfig accepts executorBinary as a backward-compatible alias for codexBinary", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const baseConfig: Record<string, unknown> = {
+    repoPath: ".",
+    repoSlug: "owner/repo",
+    defaultBranch: "main",
+    workspaceRoot: "./workspaces",
+    stateFile: "./state.json",
+    branchPrefix: "codex/issue-",
+  };
+  const writeConfig = async (name: string, extra: Record<string, unknown>): Promise<string> => {
+    const configPath = path.join(tempDir, name);
+    await fs.writeFile(configPath, JSON.stringify({ ...baseConfig, ...extra }), "utf8");
+    return configPath;
+  };
+
+  // executorBinary alone populates the (internal) codexBinary field.
+  const neutral = loadConfig(await writeConfig("neutral.json", { executorBinary: "opencode" }));
+  assert.equal(neutral.codexBinary, "opencode");
+
+  // codexBinary still works on its own (backward compatible).
+  const legacy = loadConfig(await writeConfig("legacy.json", { codexBinary: "codex" }));
+  assert.equal(legacy.codexBinary, "codex");
+
+  // executorBinary is the preferred key, so a usable one wins even when a legacy
+  // codexBinary is still present (the common migration case is not ignored).
+  const both = loadConfig(await writeConfig("both.json", { executorBinary: "opencode", codexBinary: "codex" }));
+  assert.equal(both.codexBinary, "opencode");
+
+  // A malformed (empty) executorBinary falls back to a valid codexBinary.
+  const malformed = loadConfig(await writeConfig("malformed.json", { executorBinary: "", codexBinary: "codex" }));
+  assert.equal(malformed.codexBinary, "codex");
+
+  // A starter placeholder in executorBinary is rejected the same as codexBinary.
+  const placeholderAliasPath = await writeConfig("placeholder-alias.json", {
+    executorBinary: "/absolute/path/to/codex",
+  });
+  assert.throws(() => loadConfig(placeholderAliasPath), /codexBinary|executorBinary|placeholder/i);
+
+  // A real executorBinary overrides a leftover codexBinary starter placeholder.
+  const overridePlaceholder = loadConfig(
+    await writeConfig("override-placeholder.json", {
+      codexBinary: "/absolute/path/to/codex",
+      executorBinary: "opencode",
+    }),
+  );
+  assert.equal(overridePlaceholder.codexBinary, "opencode");
+
+  // Neither present fails closed, naming both keys.
+  const missingPath = await writeConfig("missing.json", {});
+  assert.throws(() => loadConfig(missingPath), /executorBinary \(or codexBinary\)/);
+
+  // loadConfigSummary must not report a missing codexBinary when only the
+  // neutral executorBinary key is supplied.
+  const summary = loadConfigSummary(await writeConfig("summary.json", { executorBinary: "opencode" }));
+  assert.ok(!summary.missingRequiredFields.includes("codexBinary"));
+});
+
 test("loadConfigSummary reports missing required fields without throwing", async (t) => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
   t.after(async () => {

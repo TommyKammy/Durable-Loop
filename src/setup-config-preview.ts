@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfigSummaryFromDocument, resolveConfigPath, type ConfigLoadStatus } from "./core/config";
+import { normalizeConfigDocument } from "./core/config-validation";
 import { getConfigFieldPostureMetadata, type ConfigFieldName } from "./core/config-field-posture";
 import { reviewProviderProfileFromConfig, type ReviewProviderProfileId } from "./core/review-providers";
 import type { SetupReadinessFieldKey } from "./setup-readiness";
@@ -223,7 +224,9 @@ function readRawConfigDocument(configPath: string): Record<string, unknown> | nu
 
   try {
     const parsed = JSON.parse(fs.readFileSync(configPath, "utf8")) as unknown;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? normalizeConfigDocument(parsed as Record<string, unknown>)
+      : null;
   } catch {
     return null;
   }

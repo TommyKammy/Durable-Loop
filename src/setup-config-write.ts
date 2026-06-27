@@ -381,6 +381,9 @@ function applySetupChanges(document: Record<string, unknown>, changes: SetupConf
   }
   if (changes.codexBinary !== undefined) {
     nextDocument.codexBinary = changes.codexBinary;
+    // executorBinary takes precedence as the preferred alias, so a stale one
+    // would shadow this edit; drop it and canonicalize to codexBinary.
+    delete nextDocument.executorBinary;
   }
   if (changes.branchPrefix !== undefined) {
     nextDocument.branchPrefix = changes.branchPrefix;

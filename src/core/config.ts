@@ -15,6 +15,7 @@ import {
   buildMissingWorkspacePreparationContractWarning,
   collectStarterProfilePlaceholderFields,
   collectMissingRequiredFields,
+  normalizeConfigDocument,
   extractInvalidFieldName,
   extractRepoRelativeWorkspacePreparationHelper,
   MISSING_WORKSPACE_PREPARATION_CONTRACT_WARNING,
@@ -78,7 +79,8 @@ export interface ConfigLoadSummary {
   trustDiagnostics: TrustDiagnosticsSummary | null;
 }
 
-function buildConfigLoadSummaryFromDocument(raw: Record<string, unknown>, resolvedPath: string): ConfigLoadSummary {
+function buildConfigLoadSummaryFromDocument(rawInput: Record<string, unknown>, resolvedPath: string): ConfigLoadSummary {
+  const raw = normalizeConfigDocument(rawInput);
   const missingRequiredFields = collectMissingRequiredFields(raw);
   const starterPlaceholderFields = collectStarterProfilePlaceholderFields(raw);
   if (starterPlaceholderFields.length > 0) {
@@ -174,7 +176,9 @@ export function loadConfig(configPath?: string): SupervisorConfig {
     throw new Error(`Config file not found: ${resolvedPath}`);
   }
 
-  const raw = parseJson<Record<string, unknown>>(fs.readFileSync(resolvedPath, "utf8"), resolvedPath);
+  const raw = normalizeConfigDocument(
+    parseJson<Record<string, unknown>>(fs.readFileSync(resolvedPath, "utf8"), resolvedPath),
+  );
   const starterPlaceholderFields = collectStarterProfilePlaceholderFields(raw);
   if (starterPlaceholderFields.length > 0) {
     throw new Error(buildStarterProfilePlaceholderError(raw, starterPlaceholderFields));

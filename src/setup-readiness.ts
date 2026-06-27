@@ -14,6 +14,7 @@ import {
   summarizeTrustDiagnostics,
   validateWorkspacePreparationCommandForWorktrees,
 } from "./core/config";
+import { normalizeConfigDocument } from "./core/config-validation";
 import type {
   CodexModelStrategy,
   ExecutionSafetyMode,
@@ -226,7 +227,9 @@ function readRawConfigDocument(configPath: string): RawConfigDocument {
 
   try {
     const parsed = JSON.parse(fs.readFileSync(configPath, "utf8")) as unknown;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? normalizeConfigDocument(parsed as Record<string, unknown>)
+      : null;
   } catch {
     return null;
   }

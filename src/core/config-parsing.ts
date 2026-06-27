@@ -234,6 +234,24 @@ function parseExecutorKind(value: unknown): { executorKind?: ConfiguredExecutorK
   return { executorKind: value as ConfiguredExecutorKind };
 }
 
+/**
+ * Resolve the executor binary path. `codexBinary` is the canonical field and
+ * takes precedence; `executorBinary` is accepted as an executor-neutral alias
+ * only when `codexBinary` is not set, so operators are not forced into the
+ * Codex-named key. Keeping `codexBinary` canonical means setup-writer edits
+ * (which target `codexBinary`) always take effect and a malformed
+ * `executorBinary` cannot shadow a valid `codexBinary`.
+ */
+function resolveExecutorBinaryConfigValue(raw: Record<string, unknown>): string {
+  if (typeof raw.codexBinary === "string" && raw.codexBinary.trim() !== "") {
+    return raw.codexBinary;
+  }
+  if (typeof raw.executorBinary === "string" && raw.executorBinary.trim() !== "") {
+    return raw.executorBinary;
+  }
+  return assertString(raw.codexBinary, "executorBinary (or codexBinary)");
+}
+
 function assertPattern(value: string, label: string, pattern: RegExp): string {
   if (!pattern.test(value)) {
     throw new Error(`Invalid config field: ${label}`);
@@ -467,7 +485,7 @@ export function parseSupervisorConfigDocument(raw: Record<string, unknown>, reso
       typeof raw.stateBootstrapFile === "string" && raw.stateBootstrapFile.trim() !== ""
         ? resolveMaybeRelative(configDir, raw.stateBootstrapFile)
         : undefined,
-    codexBinary: resolveCommandLikeValue(configDir, assertString(raw.codexBinary, "codexBinary")),
+    codexBinary: resolveCommandLikeValue(configDir, resolveExecutorBinaryConfigValue(raw)),
     ...parseExecutorKind(raw.executorKind),
     trustMode:
       typeof raw.trustMode === "string" && VALID_TRUST_MODES.has(raw.trustMode as TrustMode)

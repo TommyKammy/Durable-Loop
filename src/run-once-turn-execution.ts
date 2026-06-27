@@ -233,6 +233,8 @@ interface ExecuteCodexTurnPhaseArgs {
       import("./core/types").CodexTurnResult,
       "lastMessage" | "stderr" | "stdout"
     >;
+    failureCategory?: FailureContext["category"];
+    exitKind?: "codex_exit" | "executor_exit";
     classifyFailure: (
       message: string | null | undefined,
     ) => "timeout" | "command_error";
@@ -563,6 +565,8 @@ export async function executeCodexTurnPhase(
               stderr: turnResult.stderr,
               stdout: turnResult.stdout,
             },
+            failureCategory: executorFailureCategory,
+            exitKind: isCodexExecutor ? "codex_exit" : "executor_exit",
             classifyFailure: args.classifyFailure,
             buildCodexFailureContext: args.buildCodexFailureContext,
             applyFailureSignature: args.applyFailureSignature,

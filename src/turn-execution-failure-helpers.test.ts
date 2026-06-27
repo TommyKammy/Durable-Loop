@@ -429,3 +429,31 @@ test("persistHintedCodexTurnState records executor-neutral failed category and k
   assert.equal(updated.last_failure_kind, "executor_failed");
   assert.equal(updated.last_failure_context?.category, "executor");
 });
+
+test("persistCodexTurnExitFailure records executor-neutral category and exit kind when provided", async () => {
+  const state: SupervisorStateFile = {
+    activeIssueNumber: 110,
+    issues: { "110": createRecord({ issue_number: 110, state: "stabilizing" }) },
+  };
+
+  const updated = await persistCodexTurnExitFailure({
+    stateStore: {
+      touch: (record, patch) => ({ ...record, ...patch, updated_at: "2026-03-24T03:15:00Z" }),
+      save: async () => undefined,
+    },
+    state,
+    record: state.issues["110"]!,
+    issue: { createdAt: "2026-03-24T03:00:00Z" },
+    syncJournal: async () => undefined,
+    issueNumber: 110,
+    codexResult: { lastMessage: "Summary: failed", stderr: "non-zero exit", stdout: "" },
+    failureCategory: "executor",
+    exitKind: "executor_exit",
+    classifyFailure: messageClassifier,
+    buildCodexFailureContext: failureContextStub,
+    applyFailureSignature: () => ({ last_failure_signature: null, repeated_failure_signature_count: 0 }),
+  });
+
+  assert.equal(updated.last_failure_kind, "executor_exit");
+  assert.equal(updated.last_failure_context?.category, "executor");
+});

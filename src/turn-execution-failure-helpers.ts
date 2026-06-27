@@ -49,6 +49,13 @@ interface PersistCodexExitFailureArgs {
   syncJournal: (record: IssueRunRecord) => Promise<void>;
   issueNumber: number;
   codexResult: Pick<CodexTurnResult, "lastMessage" | "stderr" | "stdout">;
+  /**
+   * Executor-neutral category/exit kind to record for a non-zero exit. Default
+   * to the Codex values; non-Codex executors pass the neutral values so an
+   * executor exit is not misattributed to Codex. The timeout case is unchanged.
+   */
+  failureCategory?: FailureContextCategory;
+  exitKind?: "codex_exit" | "executor_exit";
   classifyFailure: (message: string | null | undefined) => "timeout" | "command_error";
   buildCodexFailureContext: (
     category: FailureContext["category"],
@@ -115,7 +122,7 @@ interface PersistHintedCodexTurnStateArgs {
 
 function timeoutRetryPatch(
   record: IssueRunRecord,
-  failureKind: "timeout" | "command_error" | "codex_exit",
+  failureKind: "timeout" | "command_error" | "codex_exit" | "executor_exit",
 ): Pick<IssueRunRecord, "timeout_retry_count"> {
   return {
     timeout_retry_count: failureKind === "timeout" ? record.timeout_retry_count + 1 : record.timeout_retry_count,
@@ -218,9 +225,10 @@ export async function persistCodexTurnExitFailure(args: PersistCodexExitFailureA
   const failureOutput = [args.codexResult.lastMessage, args.codexResult.stderr, args.codexResult.stdout]
     .filter(Boolean)
     .join("\n");
-  const failureKind = args.classifyFailure(failureOutput) === "timeout" ? "timeout" : "codex_exit";
+  const failureKind =
+    args.classifyFailure(failureOutput) === "timeout" ? "timeout" : (args.exitKind ?? "codex_exit");
   const failureContext = args.buildCodexFailureContext(
-    "codex",
+    args.failureCategory ?? "codex",
     `Codex exited non-zero for issue #${args.issueNumber}.`,
     [truncatePreservingStartAndEnd(failureOutput, 2000) ?? "Unknown failure output"],
   );

@@ -31,7 +31,6 @@ import type {
 } from "../core/types";
 import { resolveExecutorTurnTimeoutMinutes } from "../core/config-types";
 import {
-  buildClaudeCodePermissionArgs,
   createExecutorAgentRunner,
   runExecutorCliCommand,
   type ExecutorTurnResult,
@@ -95,10 +94,11 @@ export function buildClaudeCodeArgs(
     args.push("--resume", sessionId);
   }
 
-  // Permissions posture: gated on executionSafetyMode. operator_gated forces an
-  // explicit non-bypass --permission-mode (overrides ambient settings); autonomous
-  // bypasses prompts.
-  args.push(...buildClaudeCodePermissionArgs(config));
+  // Claude Code runs autonomously: `claude -p` is non-interactive (stdin is not
+  // wired to an operator), so there is no live approval channel. operator_gated is
+  // therefore rejected up front in createExecutor rather than reaching here, so
+  // this executor only ever runs in the autonomous posture.
+  args.push("--dangerously-skip-permissions");
 
   // Workspace directory access
   args.push("--add-dir", workspacePath);

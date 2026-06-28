@@ -106,6 +106,21 @@ export function createExecutor(
   }
 
   const kind = resolveExecutorKind(config);
+
+  // operator_gated requires a permission gate the executor can enforce
+  // non-interactively. Codex sandboxes by default and OpenCode honors its own
+  // opencode.json allow/ask/deny rules, but `claude -p` is non-interactive with
+  // no operator approval channel, so a gated request would hang or run ungated.
+  // Fail closed at construction (once) rather than per turn.
+  if (config.executionSafetyMode === "operator_gated" && kind === "claude") {
+    throw new Error(
+      "executionSafetyMode=operator_gated is not supported with the Claude Code executor: " +
+        "`claude -p` runs non-interactively with no operator approval channel. Use the Codex " +
+        "executor (sandboxed) or the OpenCode executor with an opencode.json ask/deny permission " +
+        "config for operator-gated runs.",
+    );
+  }
+
   const overrides = options
     ? {
         classifyFailureImpl: options.classifyFailureImpl,

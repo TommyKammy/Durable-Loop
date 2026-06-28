@@ -20,47 +20,22 @@ import type { PromptBuilder } from "./types";
 import { parseAgentTurnStructuredResult } from "../supervisor/agent-runner";
 
 /**
- * Permission CLI args for the Claude Code executor, gated on the configured
- * execution-safety posture.
- *
- * `--dangerously-skip-permissions` is equivalent to `--permission-mode
- * bypassPermissions`. Simply omitting it for `operator_gated` is not enough:
- * Claude Code would then fall back to the ambient `permissions.defaultMode`, so a
- * host configured with `bypassPermissions` would still run ungated. The startup
- * `--permission-mode` flag overrides settings, so for `operator_gated` we pass an
- * explicit non-bypass mode (`default`, which prompts for approval) instead of
- * relying on ambient settings.
- */
-export function buildClaudeCodePermissionArgs(
-  config: Pick<SupervisorConfig, "executionSafetyMode">,
-): string[] {
-  return config.executionSafetyMode === "operator_gated"
-    ? ["--permission-mode", "default"]
-    : ["--dangerously-skip-permissions"];
-}
-
-/**
  * Permission CLI args for the OpenCode executor, gated on the configured
  * execution-safety posture.
  *
- * OpenCode starts from permissive defaults (most permissions are `allow`) unless
- * an explicit `permission` configuration is supplied, and there is no verified
- * CLI flag to force an ask/deny posture. Rather than let an `operator_gated`
- * supervisor turn run effectively autonomously, fail closed and require an
- * explicit OpenCode permission configuration (or a different executor).
+ * In `operator_gated` mode the bypass flag is omitted so OpenCode enforces the
+ * allow/ask/deny rules from the operator's own `opencode.json` `permission`
+ * config (https://opencode.ai/docs/config/); the supervisor cannot inspect that
+ * file, so configuring it is the operator's responsibility. In autonomous mode
+ * the skip-permissions flag is emitted.
+ *
+ * NOTE: the exact OpenCode skip-permissions flag name is unverified against the
+ * real OpenCode CLI; this only makes the existing flag conditional.
  */
 export function buildOpenCodePermissionArgs(
   config: Pick<SupervisorConfig, "executionSafetyMode">,
 ): string[] {
-  if (config.executionSafetyMode === "operator_gated") {
-    throw new Error(
-      "executionSafetyMode=operator_gated cannot be enforced for the OpenCode executor: OpenCode " +
-        "defaults to permissive permissions and exposes no verified CLI flag to force an ask/deny " +
-        "posture. Provide an explicit OpenCode `permission` (ask/deny) configuration, or use the " +
-        "Codex or Claude executor for operator-gated runs.",
-    );
-  }
-  return ["--dangerously-skip-permissions"];
+  return config.executionSafetyMode === "operator_gated" ? [] : ["--dangerously-skip-permissions"];
 }
 import { buildCodexFailureContext, classifyFailure, classifyTurnError } from "../supervisor/supervisor-failure-helpers";
 import type {

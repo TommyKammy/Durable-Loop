@@ -11,13 +11,10 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { Executor } from "./types";
 import type { AgentTurnResult, StartAgentTurnContext } from "../agent-contract";
-import {
-  buildClaudeCodePermissionArgs,
-  buildOpenCodePermissionArgs,
-  type ExecutorTurnResult,
-} from "./executor-runner";
+import { buildOpenCodePermissionArgs, type ExecutorTurnResult } from "./executor-runner";
 import type { GitHubIssue, SupervisorConfig } from "../core/types";
 import { CodexExecutor } from "./codex-executor";
+import { createExecutor } from "./executor";
 import { OpenCodeExecutor, buildOpenCodeArgs } from "./opencode-executor";
 import { ClaudeCodeExecutor, buildClaudeCodeArgs } from "./claude-code-executor";
 import {
@@ -250,12 +247,15 @@ describe("CLI arg construction", () => {
     const fresh = buildOpenCodeArgs(createConfig(), "/ws", "PROMPT", "implementing");
     assert.equal(fresh.includes("--session"), false);
 
-    // operator_gated fails closed for OpenCode (no verified CLI ask/deny flag),
-    // rather than silently running under permissive defaults.
-    assert.throws(
-      () => buildOpenCodeArgs(createConfig({ executionSafetyMode: "operator_gated" }), "/ws", "PROMPT", "implementing"),
-      /operator_gated cannot be enforced for the OpenCode executor/,
+    // operator_gated omits the bypass flag so OpenCode's own opencode.json
+    // allow/ask/deny rules govern.
+    const gated = buildOpenCodeArgs(
+      createConfig({ executionSafetyMode: "operator_gated" }),
+      "/ws",
+      "PROMPT",
+      "implementing",
     );
+    assert.equal(gated.includes("--dangerously-skip-permissions"), false);
   });
 
   test("ClaudeCodeExecutor builds correct CLI args", () => {
@@ -271,36 +271,26 @@ describe("CLI arg construction", () => {
 
     const fresh = buildClaudeCodeArgs(createConfig(), "/ws", "PROMPT", "implementing");
     assert.equal(fresh.includes("--resume"), false);
-
-    // operator_gated forces an explicit non-bypass permission mode (overrides
-    // ambient settings) instead of merely dropping the bypass flag.
-    const gated = buildClaudeCodeArgs(
-      createConfig({ executionSafetyMode: "operator_gated" }),
-      "/ws",
-      "PROMPT",
-      "implementing",
-    );
-    assert.equal(gated.includes("--dangerously-skip-permissions"), false);
-    assert.equal(flagValue(gated, "--permission-mode"), "default");
   });
 
-  test("buildClaudeCodePermissionArgs forces a non-bypass mode when operator-gated", () => {
-    assert.deepEqual(buildClaudeCodePermissionArgs({ executionSafetyMode: "unsandboxed_autonomous" }), [
-      "--dangerously-skip-permissions",
-    ]);
-    assert.deepEqual(buildClaudeCodePermissionArgs({ executionSafetyMode: "operator_gated" }), [
-      "--permission-mode",
-      "default",
-    ]);
-  });
-
-  test("buildOpenCodePermissionArgs fails closed when operator-gated", () => {
+  test("buildOpenCodePermissionArgs omits the bypass flag only when operator-gated", () => {
     assert.deepEqual(buildOpenCodePermissionArgs({ executionSafetyMode: "unsandboxed_autonomous" }), [
       "--dangerously-skip-permissions",
     ]);
+    assert.deepEqual(buildOpenCodePermissionArgs({ executionSafetyMode: "operator_gated" }), []);
+  });
+
+  test("createExecutor rejects operator_gated for the Claude executor (no non-interactive approval channel)", () => {
     assert.throws(
-      () => buildOpenCodePermissionArgs({ executionSafetyMode: "operator_gated" }),
-      /operator_gated cannot be enforced for the OpenCode executor/,
+      () =>
+        createExecutor(
+          createConfig({ executorBinary: "/usr/bin/claude", executionSafetyMode: "operator_gated" }),
+        ),
+      /operator_gated is not supported with the Claude Code executor/,
+    );
+    // Codex and OpenCode remain usable under operator_gated.
+    assert.doesNotThrow(() =>
+      createExecutor(createConfig({ executorBinary: "/usr/bin/opencode", executionSafetyMode: "operator_gated" })),
     );
   });
 

@@ -23,7 +23,10 @@ import type {
   ResumeAgentTurnContext,
   StartAgentTurnContext,
 } from "./agent-runner";
-import { createCodexAgentRunner, detectCodexCliCapabilities, parseAgentTurnStructuredResult } from "./agent-runner";
+import { parseAgentTurnStructuredResult } from "./agent-runner";
+// createCodexAgentRunner / detectCodexCliCapabilities moved to the Codex
+// executor (the Codex CLI dependency now lives behind the Codex boundary).
+import { createCodexAgentRunner, detectCodexCliCapabilities } from "../executors/codex-executor";
 
 function createConfig(overrides: Partial<SupervisorConfig> = {}): SupervisorConfig {
   return {

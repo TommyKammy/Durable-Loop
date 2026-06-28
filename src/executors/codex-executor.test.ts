@@ -17,16 +17,18 @@ import type {
   AgentTurnResult,
   AgentTurnStructuredResult,
 } from "../supervisor/agent-runner";
-import {
-  createCodexAgentRunner,
-  detectCodexCliCapabilities,
-  parseAgentTurnStructuredResult,
-} from "../supervisor/agent-runner";
+import { parseAgentTurnStructuredResult } from "../supervisor/agent-runner";
 import type {
   SupervisorConfig,
   RunState,
 } from "../core/types";
-import { CodexExecutor, CodexModelPolicy, CodexOutputParser } from "./codex-executor";
+import {
+  CodexExecutor,
+  CodexModelPolicy,
+  CodexOutputParser,
+  createCodexAgentRunner,
+  detectCodexCliCapabilities,
+} from "./codex-executor";
 import { createExecutor, executorToAgentRunner, resolveExecutorKind } from "./executor";
 import { MockExecutor } from "./mock-executor";
 

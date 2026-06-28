@@ -206,7 +206,7 @@ async function prepareWorkspaceContext(
   const syncMemoryArtifacts = args.syncMemoryArtifacts ?? syncMemoryArtifactsImpl;
   const getWorkspaceStatus = args.getWorkspaceStatus ?? getWorkspaceStatusImpl;
 
-  const previousCodexSummary = args.record.last_codex_summary;
+  const previousCodexSummary = args.record.last_executor_summary;
   const previousError = args.record.last_error;
   const ensuredWorkspace = normalizeEnsuredWorkspace(
     await ensureWorkspace(args.config, args.record.issue_number, args.record.branch),

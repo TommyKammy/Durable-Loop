@@ -94,5 +94,5 @@ test("runOnce routes supervisor turn execution through an injected agent runner"
   const record = persisted.issues[String(issueNumber)];
   assert.equal(record.executor_session_id, "session-agent-runner");
   assert.equal(record.last_failure_kind, null);
-  assert.match(record.last_codex_summary ?? "", /completed via injected agent runner/);
+  assert.match(record.last_executor_summary ?? "", /completed via injected agent runner/);
 });

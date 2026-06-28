@@ -99,7 +99,7 @@ function createRecord(overrides: Partial<IssueRunRecord> = {}): IssueRunRecord {
     repeated_blocker_count: 0,
     repeated_failure_signature_count: 1,
     last_head_sha: "abcdef1",
-    last_codex_summary: null,
+    last_executor_summary: null,
     last_recovery_reason: null,
     last_recovery_at: null,
     last_error: "Codex completed without updating the issue journal for issue #366.",
@@ -580,7 +580,7 @@ test("buildDetailedStatusSummaryLines shapes optional summaries and artifact pat
     branch: "codex/issue-91",
     workspace: "/tmp/workspaces/issue-91",
     updated_at: "2026-03-13T00:20:00Z",
-    last_codex_summary: null,
+    last_executor_summary: null,
     last_recovery_reason: "merged_pr_convergence: tracked PR #191 merged; marked issue #91 done",
     last_recovery_at: "2026-03-13T00:20:00Z",
   });
@@ -661,7 +661,7 @@ test("buildDetailedStatusModel reports the latest recovery when no active issue 
     branch: "codex/issue-91",
     workspace: "/tmp/workspaces/issue-91",
     updated_at: "2026-03-13T00:20:00Z",
-    last_codex_summary: null,
+    last_executor_summary: null,
     last_recovery_reason: "merged_pr_convergence: tracked PR #191 merged; marked issue #91 done",
     last_recovery_at: "2026-03-13T00:20:00Z",
   });

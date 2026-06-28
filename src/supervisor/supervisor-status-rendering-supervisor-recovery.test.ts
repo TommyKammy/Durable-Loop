@@ -146,7 +146,7 @@ function createRecord(overrides: Partial<IssueRunRecord> = {}): IssueRunRecord {
     last_head_sha: "abcdef1",
     review_follow_up_head_sha: null,
     review_follow_up_remaining: 0,
-    last_codex_summary: null,
+    last_executor_summary: null,
     last_recovery_reason: null,
     last_recovery_at: null,
     last_error: null,
@@ -241,7 +241,7 @@ test("formatDetailedStatus surfaces the latest recovery reason separately from t
     last_failure_signature: null,
     executor_session_id: null,
     updated_at: "2026-03-13T00:20:00Z",
-    last_codex_summary: null,
+    last_executor_summary: null,
     last_recovery_reason: "merged_pr_convergence: tracked PR #191 merged; marked issue #91 done",
     last_recovery_at: "2026-03-13T00:20:00Z",
   });
@@ -277,7 +277,7 @@ test("formatDetailedStatus reports idle status with the latest record and latest
     branch: "codex/issue-91",
     workspace: "/tmp/workspaces/issue-91",
     updated_at: "2026-03-13T00:20:00Z",
-    last_codex_summary: null,
+    last_executor_summary: null,
     last_recovery_reason: "merged_pr_convergence: tracked PR #191 merged; marked issue #91 done",
     last_recovery_at: "2026-03-13T00:20:00Z",
   });

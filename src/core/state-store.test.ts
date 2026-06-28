@@ -63,7 +63,7 @@ function createRecord(issueNumber: number, overrides: Partial<IssueRunRecord> = 
     repeated_blocker_count: 1,
     repeated_failure_signature_count: 1,
     last_head_sha: "deadbee",
-    last_codex_summary: "previous summary",
+    last_executor_summary: "previous summary",
     last_recovery_reason: null,
     last_recovery_at: null,
     last_error: "verification still failing",

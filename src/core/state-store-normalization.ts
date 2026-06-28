@@ -143,12 +143,18 @@ function normalizeReviewLoopRetryState(value: unknown): ReviewLoopRetryStateEntr
 export function normalizeIssueRecord(value: IssueRunRecord): IssueRunRecord {
   const addressingReviewStrategy = normalizeAddressingReviewStrategy(value.addressing_review_strategy);
 
-  // Read-time migration: codex_session_id was renamed to executor_session_id.
-  // Map the legacy key on read and drop it from the spread so only the canonical
-  // key is written back. The session id VALUE is unchanged, so session-lock
-  // paths derived from it stay identical.
-  const { codex_session_id: legacyExecutorSessionId, ...rest } = value as IssueRunRecord & {
+  // Read-time migration: codex_session_id/last_codex_summary were renamed to
+  // executor_session_id/last_executor_summary. Map the legacy keys on read and
+  // drop them from the spread so only the canonical keys are written back. For
+  // the session id the VALUE is unchanged, so session-lock paths derived from it
+  // stay identical.
+  const {
+    codex_session_id: legacyExecutorSessionId,
+    last_codex_summary: legacyExecutorSummary,
+    ...rest
+  } = value as IssueRunRecord & {
     codex_session_id?: string | null;
+    last_codex_summary?: string | null;
   };
 
   return {
@@ -184,6 +190,8 @@ export function normalizeIssueRecord(value: IssueRunRecord): IssueRunRecord {
     // when the canonical key is entirely absent (a record predating the rename).
     executor_session_id:
       "executor_session_id" in value ? value.executor_session_id ?? null : legacyExecutorSessionId ?? null,
+    last_executor_summary:
+      "last_executor_summary" in value ? value.last_executor_summary ?? null : legacyExecutorSummary ?? null,
     local_review_head_sha: value.local_review_head_sha ?? null,
     local_review_blocker_summary: value.local_review_blocker_summary ?? null,
     local_review_summary_path: value.local_review_summary_path ?? null,

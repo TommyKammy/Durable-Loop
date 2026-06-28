@@ -169,7 +169,7 @@ function createPreparationRecord(workspacePath: string, overrides: Partial<Issue
     repeated_blocker_count: 0,
     repeated_failure_signature_count: 0,
     last_head_sha: "head-240",
-    last_codex_summary: null,
+    last_executor_summary: null,
     last_recovery_reason: null,
     last_recovery_at: null,
     last_error: null,

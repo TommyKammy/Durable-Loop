@@ -314,7 +314,7 @@ export async function reconcileStaleDoneIssueStatesInModule(
       helpers.applyRecoveryEvent({
         state: "blocked",
         blocked_reason: "manual_review",
-        codex_session_id: null,
+        executor_session_id: null,
         last_error: truncate(failureContext.summary, 1000),
         last_failure_kind: null,
         last_failure_context: failureContext,

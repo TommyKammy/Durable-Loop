@@ -89,7 +89,7 @@ export function createRecord(overrides: Partial<IssueRunRecord> = {}): IssueRunR
     copilot_review_timed_out_at: null,
     copilot_review_timeout_action: null,
     copilot_review_timeout_reason: null,
-    codex_session_id: null,
+    executor_session_id: null,
     local_review_head_sha: null,
     local_review_blocker_summary: null,
     local_review_summary_path: null,

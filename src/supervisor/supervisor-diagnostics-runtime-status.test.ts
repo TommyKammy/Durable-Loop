@@ -928,7 +928,7 @@ test("runRecoveryAction refuses to mutate while the supervisor run lock is held"
         journal_path: null,
         blocked_reason: "verification",
         pr_number: null,
-        codex_session_id: "session-91",
+        executor_session_id: "session-91",
       }),
     },
   };
@@ -949,7 +949,7 @@ test("runRecoveryAction refuses to mutate while the supervisor run lock is held"
 
   const persisted = JSON.parse(await fs.readFile(fixture.stateFile, "utf8")) as SupervisorStateFile;
   assert.equal(persisted.issues[String(issueNumber)]?.state, "blocked");
-  assert.equal(persisted.issues[String(issueNumber)]?.codex_session_id, "session-91");
+  assert.equal(persisted.issues[String(issueNumber)]?.executor_session_id, "session-91");
 });
 
 test("runRecoveryAction fails closed on ambiguous-owner supervisor run locks", async (t) => {

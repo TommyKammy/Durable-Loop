@@ -143,8 +143,16 @@ function normalizeReviewLoopRetryState(value: unknown): ReviewLoopRetryStateEntr
 export function normalizeIssueRecord(value: IssueRunRecord): IssueRunRecord {
   const addressingReviewStrategy = normalizeAddressingReviewStrategy(value.addressing_review_strategy);
 
+  // Read-time migration: codex_session_id was renamed to executor_session_id.
+  // Map the legacy key on read and drop it from the spread so only the canonical
+  // key is written back. The session id VALUE is unchanged, so session-lock
+  // paths derived from it stay identical.
+  const { codex_session_id: legacyExecutorSessionId, ...rest } = value as IssueRunRecord & {
+    codex_session_id?: string | null;
+  };
+
   return {
-    ...value,
+    ...rest,
     journal_path: value.journal_path ?? null,
     review_wait_started_at: value.review_wait_started_at ?? null,
     review_wait_head_sha: value.review_wait_head_sha ?? null,
@@ -171,7 +179,7 @@ export function normalizeIssueRecord(value: IssueRunRecord): IssueRunRecord {
     copilot_review_timed_out_at: value.copilot_review_timed_out_at ?? null,
     copilot_review_timeout_action: value.copilot_review_timeout_action ?? null,
     copilot_review_timeout_reason: value.copilot_review_timeout_reason ?? null,
-    codex_session_id: value.codex_session_id ?? null,
+    executor_session_id: value.executor_session_id ?? legacyExecutorSessionId ?? null,
     local_review_head_sha: value.local_review_head_sha ?? null,
     local_review_blocker_summary: value.local_review_blocker_summary ?? null,
     local_review_summary_path: value.local_review_summary_path ?? null,

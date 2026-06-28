@@ -8,7 +8,7 @@ export type SupervisorMutationRecordSnapshotDto = Pick<
   IssueRunRecord,
   | "state"
   | "pr_number"
-  | "codex_session_id"
+  | "executor_session_id"
   | "blocked_reason"
   | "last_error"
   | "last_failure_kind"
@@ -81,7 +81,7 @@ export function buildSupervisorMutationRecordSnapshot(
   return {
     state: record.state,
     pr_number: record.pr_number,
-    codex_session_id: record.codex_session_id,
+    executor_session_id: record.executor_session_id,
     blocked_reason: record.blocked_reason,
     last_error: record.last_error,
     last_failure_kind: record.last_failure_kind,

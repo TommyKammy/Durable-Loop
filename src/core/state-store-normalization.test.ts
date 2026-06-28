@@ -18,7 +18,7 @@ function createRecord(issueNumber: number, overrides: Partial<IssueRunRecord> = 
     copilot_review_timed_out_at: null,
     copilot_review_timeout_action: null,
     copilot_review_timeout_reason: null,
-    codex_session_id: null,
+    executor_session_id: null,
     local_review_head_sha: null,
     local_review_blocker_summary: null,
     local_review_summary_path: null,
@@ -101,6 +101,42 @@ test("normalizeStateForLoad realigns snapshot issue_count with normalized entrie
     url: "https://example.test/issues/91",
     state: "OPEN",
   }]);
+});
+
+test("normalizeStateForLoad migrates legacy codex_session_id to executor_session_id", () => {
+  const legacyRecord = { ...createRecord(101), codex_session_id: "session-legacy-1" } as unknown as Record<
+    string,
+    unknown
+  >;
+  // Simulate a record persisted before the rename: only the legacy key exists.
+  delete legacyRecord.executor_session_id;
+
+  const loaded = normalizeStateForLoad({
+    activeIssueNumber: null,
+    issues: { "101": legacyRecord },
+  } as unknown as SupervisorStateFile);
+
+  const normalized = loaded.issues["101"] as unknown as Record<string, unknown>;
+  assert.equal(normalized.executor_session_id, "session-legacy-1");
+  // The legacy key must not be carried forward (write the new key only).
+  assert.equal("codex_session_id" in normalized, false);
+});
+
+test("normalizeStateForLoad prefers executor_session_id when both keys are present", () => {
+  const record = {
+    ...createRecord(102),
+    executor_session_id: "session-new",
+    codex_session_id: "session-old",
+  } as unknown as Record<string, unknown>;
+
+  const loaded = normalizeStateForLoad({
+    activeIssueNumber: null,
+    issues: { "102": record },
+  } as unknown as SupervisorStateFile);
+
+  const normalized = loaded.issues["102"] as unknown as Record<string, unknown>;
+  assert.equal(normalized.executor_session_id, "session-new");
+  assert.equal("codex_session_id" in normalized, false);
 });
 
 test("normalizeStateForSave canonicalizes legacy inventory artifact paths", () => {

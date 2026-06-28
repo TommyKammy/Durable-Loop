@@ -229,7 +229,7 @@ function createStaleNoPrManualReviewRecord(config = createConfig()): IssueRunRec
     state: "blocked",
     blocked_reason: "manual_review",
     pr_number: null,
-    codex_session_id: null,
+    executor_session_id: null,
     last_error: STALE_NO_PR_MANUAL_STOP_REASON,
     last_failure_kind: null,
     last_failure_context: {
@@ -260,7 +260,7 @@ function createStaleDoneNoPrRecord(): IssueRunRecord {
     issue_number: 366,
     state: "done",
     pr_number: null,
-    codex_session_id: null,
+    executor_session_id: null,
     blocked_reason: null,
     last_error: null,
     last_failure_kind: null,
@@ -335,7 +335,7 @@ test("requeueIssueForOperator requeues a blocked issue with no tracked PR", asyn
     issue_number: 366,
     state: "blocked",
     blocked_reason: "verification",
-    codex_session_id: "session-366",
+    executor_session_id: "session-366",
     last_error: "verification failed",
     last_failure_kind: "command_error",
     last_failure_context: {
@@ -393,7 +393,7 @@ test("requeueIssueForOperator requeues a blocked issue with no tracked PR", asyn
       previousRecordSnapshot: {
         state: "blocked",
         pr_number: null,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
         blocked_reason: "verification",
         last_error: "verification failed",
         last_failure_kind: "command_error",
@@ -427,7 +427,7 @@ test("requeueIssueForOperator requeues a blocked issue with no tracked PR", asyn
   );
   assert.equal(state.issues["366"]?.state, "queued");
   assert.equal(state.issues["366"]?.blocked_reason, null);
-  assert.equal(state.issues["366"]?.codex_session_id, null);
+  assert.equal(state.issues["366"]?.executor_session_id, null);
   assert.equal(state.issues["366"]?.last_error, null);
   assert.equal(state.issues["366"]?.last_failure_kind, null);
   assert.equal(state.issues["366"]?.last_failure_context, null);
@@ -667,7 +667,7 @@ test("requeueIssueForOperator rejects active tracked-PR work", async () => {
         issue_number: 366,
         state: "stabilizing",
         pr_number: 191,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
       }),
     ],
   });
@@ -693,7 +693,7 @@ test("requeueIssueForOperator rejects active tracked-PR work", async () => {
     previousRecordSnapshot: {
       state: "stabilizing",
       pr_number: 191,
-      codex_session_id: "session-366",
+      executor_session_id: "session-366",
       blocked_reason: "handoff_missing",
       last_error: "Codex completed without updating the issue journal for issue #366.",
       last_failure_kind: null,
@@ -736,7 +736,7 @@ test("requeueIssueForOperator rejects inactive tracked-PR work", async () => {
         state: "blocked",
         blocked_reason: "review_bot_timeout",
         pr_number: 191,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
       }),
     ],
   });

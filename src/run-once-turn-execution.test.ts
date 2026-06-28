@@ -1785,7 +1785,7 @@ test("executeCodexTurnPhase skips prompt preparation side effects when the sessi
     issues: {
       "102": createRecord({
         state: "implementing",
-        codex_session_id: "session-102",
+        executor_session_id: "session-102",
         local_review_head_sha: "head-a",
         local_review_summary_path: "/tmp/reviews/head-a.md",
       }),
@@ -3275,7 +3275,7 @@ test("executeCodexTurnPhase routes start and resume turns through the shared age
     title: "Agent runner turn execution",
   });
 
-  const createContext = (record = createRecord({ codex_session_id: null })) => {
+  const createContext = (record = createRecord({ executor_session_id: null })) => {
     const state: SupervisorStateFile = {
       activeIssueNumber: 102,
       issues: {
@@ -3414,7 +3414,7 @@ test("executeCodexTurnPhase routes start and resume turns through the shared age
   assert.equal(startResult.kind, "completed");
 
   const resumeContext = createContext(
-    createRecord({ codex_session_id: "session-existing" }),
+    createRecord({ executor_session_id: "session-existing" }),
   );
   const resumeResult = await executeCodexTurnPhase(createArgs(resumeContext));
   assert.equal(resumeResult.kind, "completed");
@@ -3441,7 +3441,7 @@ test("executeCodexTurnPhase rehydrates a missing local journal before resuming a
         issues: {
           "102": createRecord({
             state: "stabilizing",
-            codex_session_id: "session-existing",
+            executor_session_id: "session-existing",
             workspace: workspacePath,
             journal_path: journalPath,
             pr_number: 116,
@@ -3633,7 +3633,7 @@ test("executeCodexTurnPhase does not rehydrate a missing local journal when the 
         issues: {
           "102": createRecord({
             state: "stabilizing",
-            codex_session_id: "session-existing",
+            executor_session_id: "session-existing",
             workspace: workspacePath,
             journal_path: journalPath,
             pr_number: 116,
@@ -3770,7 +3770,7 @@ test("executeCodexTurnPhase writes a durable interrupted-turn marker before runT
       issues: {
         "102": createRecord({
           state: "implementing",
-          codex_session_id: null,
+          executor_session_id: null,
           workspace: workspacePath,
           journal_path: path.join(
             workspacePath,
@@ -4497,7 +4497,7 @@ test("executeCodexTurnPhase falls back to a fresh start when the agent runner ca
     issues: {
       "102": createRecord({
         state: "reproducing",
-        codex_session_id: "session-existing",
+        executor_session_id: "session-existing",
       }),
     },
   };
@@ -4693,7 +4693,7 @@ test("executeCodexTurnPhase does not take a session lock when the turn must rest
     issues: {
       "102": createRecord({
         state: "addressing_review",
-        codex_session_id: "session-existing",
+        executor_session_id: "session-existing",
         pr_number: pr.number,
       }),
     },

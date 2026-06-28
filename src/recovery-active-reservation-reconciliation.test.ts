@@ -70,7 +70,7 @@ test("reconcileStaleActiveIssueReservation clears a stale reservation and emits 
       "366": createRecord({
         issue_number: 366,
         state: "implementing",
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
       }),
     },
   };
@@ -97,7 +97,7 @@ test("reconcileStaleActiveIssueReservation clears a stale reservation and emits 
   });
 
   assert.equal(state.activeIssueNumber, null);
-  assert.equal(state.issues["366"]?.codex_session_id, null);
+  assert.equal(state.issues["366"]?.executor_session_id, null);
   assert.equal(saveCalls, 1);
   assert.equal(recoveryEvents.length, 1);
   assert.match(
@@ -136,7 +136,7 @@ test("reconcileStaleActiveIssueReservation does not block interrupted turns when
         state: "addressing_review",
         workspace: workspacePath,
         journal_path: journalPath,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
         updated_at: "2026-03-26T00:00:00.000Z",
       }),
     },
@@ -166,7 +166,7 @@ test("reconcileStaleActiveIssueReservation does not block interrupted turns when
   assert.equal(state.activeIssueNumber, null);
   assert.equal(state.issues["366"]?.state, "addressing_review");
   assert.equal(state.issues["366"]?.blocked_reason, null);
-  assert.equal(state.issues["366"]?.codex_session_id, null);
+  assert.equal(state.issues["366"]?.executor_session_id, null);
   assert.match(
     state.issues["366"]?.last_recovery_reason ?? "",
     /durable_progress_evidence=journal_mtime_advanced/,
@@ -210,7 +210,7 @@ test("reconcileStaleActiveIssueReservation uses the canonical local journal when
         state: "addressing_review",
         workspace: workspacePath,
         journal_path: "/tmp/other-host/issue-366/.codex-supervisor/issues/366/issue-journal.md",
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
         updated_at: "2026-03-26T00:00:00.000Z",
       }),
     },
@@ -244,7 +244,7 @@ test("reconcileStaleActiveIssueReservation uses the canonical local journal when
   assert.equal(state.activeIssueNumber, null);
   assert.equal(state.issues["366"]?.state, "addressing_review");
   assert.equal(state.issues["366"]?.blocked_reason, null);
-  assert.equal(state.issues["366"]?.codex_session_id, null);
+  assert.equal(state.issues["366"]?.executor_session_id, null);
   assert.match(
     state.issues["366"]?.last_recovery_reason ?? "",
     /durable_progress_evidence=journal_mtime_advanced/,
@@ -284,7 +284,7 @@ test("reconcileStaleActiveIssueReservation blocks interrupted turns when the can
         state: "addressing_review",
         workspace: workspacePath,
         journal_path: journalPath,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
         updated_at: "2026-03-26T00:05:00.000Z",
       }),
     },
@@ -314,7 +314,7 @@ test("reconcileStaleActiveIssueReservation blocks interrupted turns when the can
   assert.equal(state.activeIssueNumber, null);
   assert.equal(state.issues["366"]?.state, "blocked");
   assert.equal(state.issues["366"]?.blocked_reason, "handoff_missing");
-  assert.equal(state.issues["366"]?.codex_session_id, null);
+  assert.equal(state.issues["366"]?.executor_session_id, null);
   assert.match(
     state.issues["366"]?.last_failure_context?.details?.join("\n") ?? "",
     /durable_progress_evidence=journal_unchanged/,
@@ -353,7 +353,7 @@ test("reconcileStaleActiveIssueReservation reports interrupted-turn progress as 
         state: "addressing_review",
         workspace: workspacePath,
         journal_path: journalPath,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
         updated_at: "2026-03-26T00:05:00.000Z",
       }),
     },
@@ -383,7 +383,7 @@ test("reconcileStaleActiveIssueReservation reports interrupted-turn progress as 
   assert.equal(state.activeIssueNumber, null);
   assert.equal(state.issues["366"]?.state, "blocked");
   assert.equal(state.issues["366"]?.blocked_reason, "handoff_missing");
-  assert.equal(state.issues["366"]?.codex_session_id, null);
+  assert.equal(state.issues["366"]?.executor_session_id, null);
   assert.match(
     state.issues["366"]?.last_failure_context?.details?.join("\n") ?? "",
     /durable_progress_evidence=progress_unverifiable/,
@@ -403,7 +403,7 @@ test("reconcileStaleActiveIssueReservation requeues a stale stabilizing issue wi
         issue_number: 366,
         state: "stabilizing",
         pr_number: null,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
         implementation_attempt_count: 0,
       }),
     },
@@ -434,7 +434,7 @@ test("reconcileStaleActiveIssueReservation requeues a stale stabilizing issue wi
   assert.equal(state.activeIssueNumber, null);
   assert.equal(state.issues["366"]?.state, "queued");
   assert.equal(state.issues["366"]?.pr_number, null);
-  assert.equal(state.issues["366"]?.codex_session_id, null);
+  assert.equal(state.issues["366"]?.executor_session_id, null);
   assert.equal(state.issues["366"]?.last_failure_signature, "stale-stabilizing-no-pr-recovery-loop");
   assert.equal(state.issues["366"]?.stale_stabilizing_no_pr_recovery_count, 1);
   assert.equal(saveCalls, 1);
@@ -453,7 +453,7 @@ test("reconcileStaleActiveIssueReservation clears a stale reservation pointer fo
       "366": createRecord({
         issue_number: 366,
         state: "done",
-        codex_session_id: null,
+        executor_session_id: null,
         last_error: null,
       }),
     },
@@ -491,7 +491,7 @@ test("reconcileStaleActiveIssueReservation does not clear reservations for ambig
       "366": createRecord({
         issue_number: 366,
         state: "implementing",
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
       }),
     },
   };
@@ -534,7 +534,7 @@ test("reconcileStaleActiveIssueReservation does not clear reservations for ambig
   });
 
   assert.equal(state.activeIssueNumber, 366);
-  assert.equal(state.issues["366"]?.codex_session_id, "session-366");
+  assert.equal(state.issues["366"]?.executor_session_id, "session-366");
   assert.equal(saveCalls, 0);
   assert.deepEqual(recoveryEvents, []);
 });
@@ -549,7 +549,7 @@ test("reconcileStaleActiveIssueReservation clears stale no-PR failure tracking a
         issue_number: 366,
         state: "stabilizing",
         pr_number: 191,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
         implementation_attempt_count: 2,
         last_error:
           "Issue #366 re-entered stale stabilizing recovery without a tracked PR; the supervisor will retry while the repeat count remains below 3.",
@@ -622,7 +622,7 @@ test("reconcileStaleActiveIssueReservation clears stale no-PR failure tracking a
   assert.equal(state.activeIssueNumber, null);
   assert.equal(state.issues["366"]?.state, "stabilizing");
   assert.equal(state.issues["366"]?.pr_number, 191);
-  assert.equal(state.issues["366"]?.codex_session_id, null);
+  assert.equal(state.issues["366"]?.executor_session_id, null);
   assert.equal(state.issues["366"]?.last_error, null);
   assert.equal(state.issues["366"]?.last_failure_context, null);
   assert.equal(state.issues["366"]?.last_failure_signature, null);
@@ -646,7 +646,7 @@ test("reconcileStaleActiveIssueReservation blocks repeated stale stabilizing no-
         issue_number: 366,
         state: "stabilizing",
         pr_number: null,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
         implementation_attempt_count: 2,
         last_failure_signature: "stale-stabilizing-no-pr-recovery-loop",
         repeated_failure_signature_count: config.sameFailureSignatureRepeatLimit - 1,
@@ -680,7 +680,7 @@ test("reconcileStaleActiveIssueReservation blocks repeated stale stabilizing no-
   assert.equal(state.activeIssueNumber, null);
   assert.equal(state.issues["366"]?.state, "blocked");
   assert.equal(state.issues["366"]?.pr_number, null);
-  assert.equal(state.issues["366"]?.codex_session_id, null);
+  assert.equal(state.issues["366"]?.executor_session_id, null);
   assert.equal(state.issues["366"]?.blocked_reason, "manual_review");
   assert.equal(
     state.issues["366"]?.last_failure_signature,
@@ -713,7 +713,7 @@ test("reconcileStaleActiveIssueReservation blocks already-satisfied-on-main stal
         issue_number: 366,
         state: "stabilizing",
         pr_number: null,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
         implementation_attempt_count: 2,
         last_failure_signature: "stale-stabilizing-no-pr-recovery-loop",
         repeated_failure_signature_count: 1,
@@ -751,7 +751,7 @@ test("reconcileStaleActiveIssueReservation blocks already-satisfied-on-main stal
   assert.equal(state.activeIssueNumber, null);
   assert.equal(state.issues["366"]?.state, "blocked");
   assert.equal(state.issues["366"]?.pr_number, null);
-  assert.equal(state.issues["366"]?.codex_session_id, null);
+  assert.equal(state.issues["366"]?.executor_session_id, null);
   assert.equal(state.issues["366"]?.blocked_reason, "manual_review");
   assert.match(
     state.issues["366"]?.last_error ?? "",

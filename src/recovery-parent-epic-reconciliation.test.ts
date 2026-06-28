@@ -176,7 +176,7 @@ test("reconcileParentEpicClosures persists recovery metadata for an untracked pa
   assert.equal(state.issues["123"]?.state, "done");
   assert.equal(state.issues["123"]?.pr_number, null);
   assert.equal(state.issues["123"]?.blocked_reason, null);
-  assert.equal(state.issues["123"]?.codex_session_id, null);
+  assert.equal(state.issues["123"]?.executor_session_id, null);
   assert.equal(state.issues["123"]?.last_recovery_reason, PARENT_EPIC_AUTO_CLOSED_REASON);
   assert.ok(state.issues["123"]?.last_recovery_at);
   if (stateStore.savedState === null) {

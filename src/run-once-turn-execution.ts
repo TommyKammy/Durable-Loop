@@ -395,7 +395,7 @@ export async function executeCodexTurnPhase(
       sessionLock =
         args.sessionLock ??
         (shouldResumeTurn
-          ? await args.acquireSessionLock(record.codex_session_id!)
+          ? await args.acquireSessionLock(record.executor_session_id!)
           : null);
       if (sessionLock && !sessionLock.acquired) {
         return {
@@ -478,7 +478,7 @@ export async function executeCodexTurnPhase(
           normalizedJournalAfterRun ?? journalAfterRun;
         record = stateStore.touch(record, {
           ...dossierConsumptionPatch,
-          codex_session_id: turnResult.sessionId,
+          executor_session_id: turnResult.sessionId,
           last_codex_summary: truncate(turnResult.supervisorMessage),
           last_failure_kind: turnResult.failureKind,
           last_error:

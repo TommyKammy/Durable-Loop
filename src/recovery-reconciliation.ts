@@ -115,7 +115,7 @@ function createUntrackedRecoveredDoneRecord(issueNumber: number): IssueRunRecord
     copilot_review_timed_out_at: null,
     copilot_review_timeout_action: null,
     copilot_review_timeout_reason: null,
-    codex_session_id: null,
+    executor_session_id: null,
     local_review_head_sha: null,
     local_review_blocker_summary: null,
     local_review_summary_path: null,
@@ -379,7 +379,7 @@ export async function requeueIssueForOperator(
   const clearVerificationDiagnostics = record.blocked_reason === "verification";
   const updated = stateStore.touch(record, applyRecoveryEvent({
     state: "queued",
-    codex_session_id: null,
+    executor_session_id: null,
     blocked_reason: null,
     last_error: clearVerificationDiagnostics ? null : record.last_error,
     last_failure_kind: clearVerificationDiagnostics ? null : record.last_failure_kind,
@@ -695,7 +695,7 @@ export async function reconcileStaleFailedIssueStates(
           last_failure_signature: null,
           repeated_failure_signature_count: 0,
           stale_stabilizing_no_pr_recovery_count: 0,
-          codex_session_id: null,
+          executor_session_id: null,
           ...issueDefinitionFreshnessPatch(issue),
           ...applyRecoveryEvent({}, recoveryEvent),
         });

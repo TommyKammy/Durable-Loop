@@ -126,7 +126,7 @@ export async function reconcileStaleFailedNoPrRecord(args: {
     const patch: Partial<IssueRunRecord> = {
       state: "queued",
       pr_number: null,
-      codex_session_id: null,
+      executor_session_id: null,
       blocked_reason: null,
       last_error: null,
       last_failure_kind: null,
@@ -161,7 +161,7 @@ export async function reconcileStaleFailedNoPrRecord(args: {
     const patch: Partial<IssueRunRecord> = {
       state: "blocked",
       pr_number: null,
-      codex_session_id: null,
+      executor_session_id: null,
       blocked_reason: "manual_review",
       last_error: truncate(manualReviewFailureContext.summary, 1000),
       last_failure_kind: null,
@@ -210,7 +210,7 @@ export async function reconcileStaleFailedNoPrRecord(args: {
   const patch: Partial<IssueRunRecord> = {
     state: shouldStopRepeatedRecovery ? "blocked" : "queued",
     pr_number: null,
-    codex_session_id: null,
+    executor_session_id: null,
     blocked_reason: shouldStopRepeatedRecovery ? "manual_review" : null,
     last_error: truncate(failureContext.summary, 1000),
     last_failure_kind: null,

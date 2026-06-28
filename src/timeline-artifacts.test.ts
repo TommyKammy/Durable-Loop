@@ -121,7 +121,7 @@ test("buildIssueRunTimelineExport orders available major lifecycle events", () =
     last_head_sha: "head-1748",
     pr_number: 1748,
     state: "done",
-    codex_session_id: "session-1742",
+    executor_session_id: "session-1742",
     last_codex_summary: "Implemented timeline export.",
     latest_local_ci_result: {
       outcome: "passed",
@@ -276,7 +276,7 @@ test("buildIssueRunTimelineExport keeps sparse historical records explicit", () 
       local_review_recommendation: null,
       last_recovery_reason: null,
       last_recovery_at: null,
-      codex_session_id: null,
+      executor_session_id: null,
       last_codex_summary: null,
       updated_at: "2026-04-25T10:12:00Z",
     }),

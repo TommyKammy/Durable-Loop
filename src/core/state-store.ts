@@ -139,8 +139,8 @@ export class StateStore {
         hasOwn(patch, "copilot_review_timeout_reason")
           ? patch.copilot_review_timeout_reason ?? null
           : record.copilot_review_timeout_reason ?? null,
-      codex_session_id:
-        hasOwn(patch, "codex_session_id") ? patch.codex_session_id ?? null : record.codex_session_id ?? null,
+      executor_session_id:
+        hasOwn(patch, "executor_session_id") ? patch.executor_session_id ?? null : record.executor_session_id ?? null,
       local_review_head_sha:
         hasOwn(patch, "local_review_head_sha") ? patch.local_review_head_sha ?? null : record.local_review_head_sha ?? null,
       local_review_blocker_summary:

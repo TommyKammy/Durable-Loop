@@ -75,7 +75,7 @@ test("reconcileStaleFailedIssueStates requeues failed no-PR issues when the issu
         issue_number: 366,
         state: "failed",
         pr_number: null,
-        codex_session_id: null,
+        executor_session_id: null,
         last_error: "Codex failed against a stale issue definition.",
         last_failure_kind: "codex_exit",
         last_failure_context: {
@@ -312,7 +312,7 @@ test("reconcileStaleFailedIssueStates requeues failed no-PR issues when the work
         },
         last_failure_signature: "provider-capacity",
         repeated_failure_signature_count: 1,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
       }),
     ],
   });
@@ -376,7 +376,7 @@ test("reconcileStaleFailedIssueStates requeues failed no-PR issues when the work
   const updated = state.issues["366"];
   assert.equal(updated.state, "queued");
   assert.equal(updated.pr_number, null);
-  assert.equal(updated.codex_session_id, null);
+  assert.equal(updated.executor_session_id, null);
   assert.equal(updated.blocked_reason, null);
   assert.equal(updated.last_failure_kind, null);
   assert.match(updated.last_error ?? "", /recoverable failed no-PR recovery/i);
@@ -436,7 +436,7 @@ test("reconcileStaleFailedIssueStates requeues failed no-PR issues when journal_
         },
         last_failure_signature: "provider-capacity",
         repeated_failure_signature_count: 1,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
       }),
     ],
   });
@@ -500,7 +500,7 @@ test("reconcileStaleFailedIssueStates requeues failed no-PR issues when journal_
   const updated = state.issues["366"];
   assert.equal(updated.state, "queued");
   assert.equal(updated.pr_number, null);
-  assert.equal(updated.codex_session_id, null);
+  assert.equal(updated.executor_session_id, null);
   assert.equal(updated.blocked_reason, null);
   assert.equal(updated.last_failure_kind, null);
   assert.match(updated.last_error ?? "", /recoverable failed no-PR recovery/i);
@@ -575,7 +575,7 @@ test("reconcileStaleFailedIssueStates fetches origin/main once per reconciliatio
         },
         last_failure_signature: "provider-capacity",
         repeated_failure_signature_count: 1,
-        codex_session_id: `session-${issueNumber}`,
+        executor_session_id: `session-${issueNumber}`,
       })),
   });
   const issues = issueDetails.map(({ issueNumber }) =>
@@ -711,7 +711,7 @@ test("reconcileStaleFailedIssueStates fails closed for all affected no-PR recove
         },
         last_failure_signature: "provider-capacity",
         repeated_failure_signature_count: 1,
-        codex_session_id: `session-${issueNumber}`,
+        executor_session_id: `session-${issueNumber}`,
       })),
   });
   const issues = issueDetails.map(({ issueNumber }) =>
@@ -851,7 +851,7 @@ test("reconcileStaleFailedIssueStates blocks failed no-PR issues for manual revi
       url: null,
       updated_at: "2026-03-13T00:20:00Z",
     },
-    codex_session_id: "session-366",
+    executor_session_id: "session-366",
   });
   const state: SupervisorStateFile = createSupervisorState({
     issues: [original],
@@ -916,7 +916,7 @@ test("reconcileStaleFailedIssueStates blocks failed no-PR issues for manual revi
   const updated = state.issues["366"];
   assert.equal(updated.state, "blocked");
   assert.equal(updated.pr_number, null);
-  assert.equal(updated.codex_session_id, null);
+  assert.equal(updated.executor_session_id, null);
   assert.equal(updated.blocked_reason, "manual_review");
   assert.equal(updated.last_failure_kind, null);
   assert.equal(updated.last_failure_context?.signature, "failed-no-pr-manual-review-required");
@@ -987,7 +987,7 @@ test("reconcileStaleFailedIssueStates keeps retryable timeout failed no-PR issue
       "workspace_head=deadbee",
       "pr_number=none",
       "pr_head=none",
-      "codex_session_id=thread-366",
+      "executor_session_id=thread-366",
     ],
     url: null,
     updated_at: "2026-03-13T00:20:05Z",
@@ -1009,7 +1009,7 @@ test("reconcileStaleFailedIssueStates keeps retryable timeout failed no-PR issue
     last_runtime_error: originalRuntimeFailureContext.summary,
     last_runtime_failure_kind: "timeout",
     last_runtime_failure_context: originalRuntimeFailureContext,
-    codex_session_id: "session-366",
+    executor_session_id: "session-366",
   });
   const state: SupervisorStateFile = createSupervisorState({
     issues: [original],
@@ -1123,7 +1123,7 @@ test("reconcileStaleFailedIssueStates snapshots the original runtime failure whe
         last_runtime_error: null,
         last_runtime_failure_kind: null,
         last_runtime_failure_context: null,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
       }),
     ],
   });
@@ -1234,7 +1234,7 @@ test("reconcileStaleFailedIssueStates requeues failed no-PR issues once when onl
     },
     last_failure_signature: "provider-capacity",
     repeated_failure_signature_count: 1,
-    codex_session_id: "session-366",
+    executor_session_id: "session-366",
   });
   const state: SupervisorStateFile = createSupervisorState({
     issues: [original],
@@ -1299,7 +1299,7 @@ test("reconcileStaleFailedIssueStates requeues failed no-PR issues once when onl
   const updated = state.issues["366"];
   assert.equal(updated.state, "queued");
   assert.equal(updated.pr_number, null);
-  assert.equal(updated.codex_session_id, null);
+  assert.equal(updated.executor_session_id, null);
   assert.equal(updated.blocked_reason, null);
   assert.equal(updated.last_error, null);
   assert.equal(updated.last_failure_kind, null);
@@ -1362,7 +1362,7 @@ test("reconcileStaleFailedIssueStates requeues failed no-PR issues once when onl
         },
         last_failure_signature: "provider-capacity",
         repeated_failure_signature_count: 1,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
       }),
     ],
   });
@@ -1426,7 +1426,7 @@ test("reconcileStaleFailedIssueStates requeues failed no-PR issues once when onl
   const updated = state.issues["366"];
   assert.equal(updated.state, "queued");
   assert.equal(updated.pr_number, null);
-  assert.equal(updated.codex_session_id, null);
+  assert.equal(updated.executor_session_id, null);
   assert.equal(updated.blocked_reason, null);
   assert.equal(updated.last_error, null);
   assert.equal(updated.last_failure_kind, null);
@@ -1483,7 +1483,7 @@ test("reconcileStaleFailedIssueStates requeues failed no-PR issues once when an 
         },
         last_failure_signature: "provider-capacity",
         repeated_failure_signature_count: 1,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
       }),
     ],
   });
@@ -1547,7 +1547,7 @@ test("reconcileStaleFailedIssueStates requeues failed no-PR issues once when an 
   const updated = state.issues["366"];
   assert.equal(updated.state, "queued");
   assert.equal(updated.pr_number, null);
-  assert.equal(updated.codex_session_id, null);
+  assert.equal(updated.executor_session_id, null);
   assert.equal(updated.blocked_reason, null);
   assert.equal(updated.last_error, null);
   assert.equal(updated.last_failure_kind, null);
@@ -1607,7 +1607,7 @@ test("reconcileStaleFailedIssueStates requeues failed no-PR issues once when no 
         last_runtime_error: originalRuntimeFailureContext.summary,
         last_runtime_failure_kind: "codex_exit",
         last_runtime_failure_context: originalRuntimeFailureContext,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
       }),
     ],
   });
@@ -1671,7 +1671,7 @@ test("reconcileStaleFailedIssueStates requeues failed no-PR issues once when no 
   const updated = state.issues["366"];
   assert.equal(updated.state, "queued");
   assert.equal(updated.pr_number, null);
-  assert.equal(updated.codex_session_id, null);
+  assert.equal(updated.executor_session_id, null);
   assert.equal(updated.blocked_reason, null);
   assert.equal(updated.last_error, null);
   assert.equal(updated.last_failure_kind, null);
@@ -1718,7 +1718,7 @@ test("reconcileStaleFailedIssueStates requeues failed no-PR issues once when no 
       "workspace_head=deadbee",
       "pr_number=none",
       "pr_head=none",
-      "codex_session_id=thread-366",
+      "executor_session_id=thread-366",
     ],
     url: null,
     updated_at: "2026-03-13T00:20:05Z",
@@ -1749,7 +1749,7 @@ test("reconcileStaleFailedIssueStates requeues failed no-PR issues once when no 
         last_runtime_error: originalRuntimeFailureContext.summary,
         last_runtime_failure_kind: "timeout",
         last_runtime_failure_context: originalRuntimeFailureContext,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
       }),
     ],
   });
@@ -1813,7 +1813,7 @@ test("reconcileStaleFailedIssueStates requeues failed no-PR issues once when no 
   const updated = state.issues["366"];
   assert.equal(updated.state, "queued");
   assert.equal(updated.pr_number, null);
-  assert.equal(updated.codex_session_id, null);
+  assert.equal(updated.executor_session_id, null);
   assert.equal(updated.blocked_reason, null);
   assert.equal(updated.last_error, null);
   assert.equal(updated.last_failure_kind, null);
@@ -1876,7 +1876,7 @@ test("reconcileStaleFailedIssueStates requeues failed no-PR issues once when all
         last_runtime_error: null,
         last_runtime_failure_kind: null,
         last_runtime_failure_context: null,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
       }),
     ],
   });
@@ -1940,7 +1940,7 @@ test("reconcileStaleFailedIssueStates requeues failed no-PR issues once when all
   const updated = state.issues["366"];
   assert.equal(updated.state, "queued");
   assert.equal(updated.pr_number, null);
-  assert.equal(updated.codex_session_id, null);
+  assert.equal(updated.executor_session_id, null);
   assert.equal(updated.blocked_reason, null);
   assert.equal(updated.last_error, null);
   assert.equal(updated.last_failure_kind, null);
@@ -1987,7 +1987,7 @@ test("reconcileStaleFailedIssueStates does not requeue already-satisfied failed 
       "workspace_head=deadbee",
       "pr_number=none",
       "pr_head=none",
-      "codex_session_id=thread-366",
+      "executor_session_id=thread-366",
     ],
     url: null,
     updated_at: "2026-03-13T00:20:05Z",
@@ -2018,7 +2018,7 @@ test("reconcileStaleFailedIssueStates does not requeue already-satisfied failed 
         last_runtime_error: originalRuntimeFailureContext.summary,
         last_runtime_failure_kind: "timeout",
         last_runtime_failure_context: originalRuntimeFailureContext,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
       }),
     ],
   });
@@ -2082,7 +2082,7 @@ test("reconcileStaleFailedIssueStates does not requeue already-satisfied failed 
   const updated = state.issues["366"];
   assert.equal(updated.state, "blocked");
   assert.equal(updated.pr_number, null);
-  assert.equal(updated.codex_session_id, null);
+  assert.equal(updated.executor_session_id, null);
   assert.equal(updated.blocked_reason, "manual_review");
   assert.equal(updated.last_failure_kind, null);
   assert.equal(updated.last_failure_context?.signature, "failed-no-pr-already-satisfied-on-main");
@@ -2142,7 +2142,7 @@ test("reconcileStaleFailedIssueStates blocks already-satisfied failed no-PR issu
         last_runtime_error: originalRuntimeFailureContext.summary,
         last_runtime_failure_kind: "codex_exit",
         last_runtime_failure_context: originalRuntimeFailureContext,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
       }),
     ],
   });
@@ -2206,7 +2206,7 @@ test("reconcileStaleFailedIssueStates blocks already-satisfied failed no-PR issu
   const updated = state.issues["366"];
   assert.equal(updated.state, "blocked");
   assert.equal(updated.pr_number, null);
-  assert.equal(updated.codex_session_id, null);
+  assert.equal(updated.executor_session_id, null);
   assert.equal(updated.blocked_reason, "manual_review");
   assert.equal(updated.last_failure_kind, null);
   assert.equal(updated.last_failure_context?.signature, "failed-no-pr-already-satisfied-on-main");
@@ -2267,7 +2267,7 @@ test("reconcileStaleFailedIssueStates sends second already-satisfied transient f
         last_runtime_error: originalRuntimeFailureContext.summary,
         last_runtime_failure_kind: "codex_exit",
         last_runtime_failure_context: originalRuntimeFailureContext,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
       }),
     ],
   });
@@ -2380,7 +2380,7 @@ test("reconcileStaleFailedIssueStates blocks failed no-PR issues for manual revi
         },
         last_failure_signature: "provider-capacity",
         repeated_failure_signature_count: 1,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
       }),
     ],
   });
@@ -2444,7 +2444,7 @@ test("reconcileStaleFailedIssueStates blocks failed no-PR issues for manual revi
   const updated = state.issues["366"];
   assert.equal(updated.state, "blocked");
   assert.equal(updated.pr_number, null);
-  assert.equal(updated.codex_session_id, null);
+  assert.equal(updated.executor_session_id, null);
   assert.equal(updated.blocked_reason, "manual_review");
   assert.equal(updated.last_failure_kind, null);
   assert.equal(updated.last_failure_context?.signature, "failed-no-pr-manual-review-required");
@@ -2509,7 +2509,7 @@ test("reconcileStaleFailedIssueStates blocks failed no-PR issues for manual revi
         },
         last_failure_signature: "provider-capacity",
         repeated_failure_signature_count: 1,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
       }),
     ],
   });
@@ -2573,7 +2573,7 @@ test("reconcileStaleFailedIssueStates blocks failed no-PR issues for manual revi
   const updated = state.issues["366"];
   assert.equal(updated.state, "blocked");
   assert.equal(updated.pr_number, null);
-  assert.equal(updated.codex_session_id, null);
+  assert.equal(updated.executor_session_id, null);
   assert.equal(updated.blocked_reason, "manual_review");
   assert.equal(updated.last_failure_kind, null);
   assert.equal(updated.last_head_sha, baseHead);
@@ -2639,7 +2639,7 @@ test("reconcileStaleFailedIssueStates blocks failed no-PR issues for manual revi
         },
         last_failure_signature: "provider-capacity",
         repeated_failure_signature_count: 1,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
       }),
     ],
   });
@@ -2703,7 +2703,7 @@ test("reconcileStaleFailedIssueStates blocks failed no-PR issues for manual revi
   const updated = state.issues["366"];
   assert.equal(updated.state, "blocked");
   assert.equal(updated.pr_number, null);
-  assert.equal(updated.codex_session_id, null);
+  assert.equal(updated.executor_session_id, null);
   assert.equal(updated.blocked_reason, "manual_review");
   assert.equal(updated.last_failure_kind, null);
   assert.equal(updated.last_head_sha, baseHead);

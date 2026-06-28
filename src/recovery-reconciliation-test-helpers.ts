@@ -217,7 +217,7 @@ export function createStaleNoPrManualReviewRecord(config = createConfig()): Issu
     state: "blocked",
     blocked_reason: "manual_review",
     pr_number: null,
-    codex_session_id: null,
+    executor_session_id: null,
     last_error: STALE_NO_PR_MANUAL_STOP_REASON,
     last_failure_kind: null,
     last_failure_context: {
@@ -248,7 +248,7 @@ export function createStaleDoneNoPrRecord(): IssueRunRecord {
     issue_number: 366,
     state: "done",
     pr_number: null,
-    codex_session_id: null,
+    executor_session_id: null,
     blocked_reason: null,
     last_error: null,
     last_failure_kind: null,

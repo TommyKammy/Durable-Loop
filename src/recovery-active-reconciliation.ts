@@ -162,8 +162,8 @@ export async function reconcileStaleActiveIssueReservationInModule(args: {
   }
 
   let missingLockReason = issueLock.status === "stale" ? "issue lock was stale" : "issue lock was missing";
-  if (record.codex_session_id) {
-    const sessionLock = await inspectFileLock(args.sessionLockPath(record.codex_session_id));
+  if (record.executor_session_id) {
+    const sessionLock = await inspectFileLock(args.sessionLockPath(record.executor_session_id));
     if (sessionLock.status === "live" || sessionLock.status === "ambiguous_owner") {
       return recoveryEvents;
     }
@@ -212,7 +212,7 @@ export async function reconcileStaleActiveIssueReservationInModule(args: {
     );
     const patch: Partial<IssueRunRecord> = {
       state: "blocked",
-      codex_session_id: null,
+      executor_session_id: null,
       last_error: truncate(failureContext.summary, 1000),
       last_failure_kind: null,
       last_failure_context: failureContext,
@@ -306,7 +306,7 @@ export async function reconcileStaleActiveIssueReservationInModule(args: {
     ? {
         state: "blocked",
         pr_number: null,
-        codex_session_id: null,
+        executor_session_id: null,
         blocked_reason: "manual_review",
         last_error: truncate(staleNoPrManualReviewContext?.summary ?? "", 1000),
         last_failure_kind: null,
@@ -319,7 +319,7 @@ export async function reconcileStaleActiveIssueReservationInModule(args: {
     : {
         state: shouldStopRepeatedStaleNoPrLoop ? "blocked" : shouldRequeueStabilizing ? "queued" : record.state,
         pr_number: shouldRequeueStabilizing ? null : record.pr_number,
-        codex_session_id: null,
+        executor_session_id: null,
         last_error: staleNoPrFailureContext?.summary ?? (shouldClearStaleNoPrFailureTracking ? null : record.last_error),
         last_failure_kind: shouldRequeueStabilizing ? null : record.last_failure_kind,
         last_failure_context:

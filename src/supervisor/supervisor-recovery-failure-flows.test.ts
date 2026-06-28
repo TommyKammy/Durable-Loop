@@ -31,7 +31,7 @@ test("recoverUnexpectedCodexTurnFailure fails closed when post-turn refresh blow
     journal_path: "/tmp/workspaces/issue-87/.codex-supervisor/issue-journal.md",
     pr_number: null,
     last_head_sha: "deadbee",
-    codex_session_id: "thread-123",
+    executor_session_id: "thread-123",
     last_codex_summary: "Created a dirty checkpoint and paused before opening a PR.",
     blocked_reason: null,
     last_error: null,
@@ -88,7 +88,7 @@ test("recoverUnexpectedCodexTurnFailure fails closed when post-turn refresh blow
   assert.equal(updated.state, "failed");
   assert.equal(updated.last_failure_kind, "command_error");
   assert.match(updated.last_error ?? "", /post-turn refresh blew up/);
-  assert.equal(updated.codex_session_id, "thread-123");
+  assert.equal(updated.executor_session_id, "thread-123");
   assert.match(updated.last_codex_summary ?? "", /dirty checkpoint/i);
   assert.equal(updated.blocked_reason, null);
   assert.match(updated.last_failure_context?.summary ?? "", /Supervisor failed while recovering a Codex turn/);
@@ -108,7 +108,7 @@ test("recoverUnexpectedCodexTurnFailure preserves dirty recovery context and tim
     issue_number: issueNumber,
     state: "stabilizing",
     timeout_retry_count: 1,
-    codex_session_id: "thread-456",
+    executor_session_id: "thread-456",
     last_head_sha: "abc1234",
   });
   const state: SupervisorStateFile = {
@@ -172,7 +172,7 @@ test("recoverUnexpectedCodexTurnFailure preserves dirty recovery context and tim
     "workspace_head=deadbee",
     "pr_number=55",
     "pr_head=feed123",
-    "codex_session_id=thread-456",
+    "executor_session_id=thread-456",
   ]);
   assert.equal(state.issues[String(issueNumber)], updated);
   assert.equal(syncedRecord, updated);
@@ -364,7 +364,7 @@ test("recoverUnexpectedCodexTurnFailure records unavailable workspace inspection
     issue_number: issueNumber,
     state: "stabilizing",
     last_head_sha: "abc1234",
-    codex_session_id: null,
+    executor_session_id: null,
   });
   const state: SupervisorStateFile = {
     activeIssueNumber: issueNumber,
@@ -405,7 +405,7 @@ test("recoverUnexpectedCodexTurnFailure records unavailable workspace inspection
     "workspace_head=abc1234",
     "pr_number=none",
     "pr_head=none",
-    "codex_session_id=none",
+    "executor_session_id=none",
   ]);
 });
 

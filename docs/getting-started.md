@@ -56,7 +56,7 @@ type SetupReadinessFieldKey =
   | "defaultBranch"
   | "workspaceRoot"
   | "stateFile"
-  | "codexBinary"
+  | "executorBinary"
   | "branchPrefix"
   | "localCiCommand"
   | "reviewProvider";

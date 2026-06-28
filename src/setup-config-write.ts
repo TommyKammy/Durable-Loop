@@ -107,6 +107,12 @@ export const DANGEROUS_SETUP_CONFIG_FIELD_KEYS = [
 const DANGEROUS_CONFIGURABLE_FIELDS: DangerousSetupConfigFieldKey[] = [...DANGEROUS_SETUP_CONFIG_FIELD_KEYS];
 const ALL_CONFIGURABLE_FIELDS = [...CONFIGURABLE_FIELDS, ...DANGEROUS_CONFIGURABLE_FIELDS] as const;
 
+// Read-only legacy input aliases accepted by the setup writer but never written
+// back: they are canonicalized to their replacement key during normalization
+// (codexBinary -> executorBinary). Listed here so the unknown-field guard does
+// not reject legacy setup clients that have not migrated yet.
+const LEGACY_SETUP_INPUT_ALIASES = new Set<string>(["codexBinary"]);
+
 const RESTART_REQUIRED_FIELDS = new Set<string>(ALL_CONFIGURABLE_FIELDS);
 
 const REVIEW_PROVIDER_LOGIN_MAP: Record<SetupConfigPreviewSelectableReviewProviderProfile, string[]> = {
@@ -250,7 +256,11 @@ function normalizeSetupChanges(changes: unknown): SetupConfigChanges {
   }
 
   const raw = changes as Record<string, unknown>;
-  const unknownFields = Object.keys(raw).filter((key) => !ALL_CONFIGURABLE_FIELDS.includes(key as (typeof ALL_CONFIGURABLE_FIELDS)[number]));
+  const unknownFields = Object.keys(raw).filter(
+    (key) =>
+      !ALL_CONFIGURABLE_FIELDS.includes(key as (typeof ALL_CONFIGURABLE_FIELDS)[number]) &&
+      !LEGACY_SETUP_INPUT_ALIASES.has(key),
+  );
   if (unknownFields.length > 0) {
     throw new Error(`Unsupported setup config field: ${unknownFields[0]}`);
   }

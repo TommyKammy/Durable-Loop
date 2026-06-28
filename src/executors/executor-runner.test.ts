@@ -60,3 +60,23 @@ test("runExecutorCliCommand bounds stdout capture so runaway output cannot grow 
     `expected bounded stdout (<= ${limit + 16}), got ${result.stdout.length}`,
   );
 });
+
+test("runExecutorCliCommand fails a JSON turn whose oversized single object was truncated", async () => {
+  // A single JSON object larger than the cap: truncation cuts its middle, so no
+  // structured result can be parsed. This must be a bounded failure, not a
+  // corrupt success with empty session/message.
+  const result = await runExecutorCliCommand(
+    process.execPath,
+    ["-e", `process.stdout.write('{"result":"' + 'a'.repeat(200000) + '"}')`],
+    {
+      cwd: process.cwd(),
+      timeoutMs: 30_000,
+      parseJsonOutput: true,
+      stdoutCaptureLimitBytes: 4_000,
+    },
+  );
+
+  assert.equal(result.exitCode, 1, "truncated unparseable JSON should be a failure");
+  assert.equal(result.lastMessage, "");
+  assert.match(result.stderr, /capture limit/);
+});

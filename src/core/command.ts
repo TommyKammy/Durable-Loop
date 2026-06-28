@@ -16,6 +16,11 @@ export interface CommandResult {
   exitCode: number;
   stdout: string;
   stderr: string;
+  /**
+   * True when stdout exceeded the capture limit and was truncated. Optional so
+   * test mocks need not set it; runCommand always populates it.
+   */
+  stdoutTruncated?: boolean;
 }
 
 export class CommandExecutionError extends Error {
@@ -321,7 +326,7 @@ export async function runCommand(
         return;
       }
 
-      settleResolve({ exitCode, stdout, stderr });
+      settleResolve({ exitCode, stdout, stderr, stdoutTruncated: stdoutBuffer.truncated });
     });
   });
 }

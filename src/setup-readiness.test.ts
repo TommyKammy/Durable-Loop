@@ -53,7 +53,7 @@ test("diagnoseSetupReadiness explains copied starter profile placeholders as fir
       ["invalid_repo_path", ["repoPath"]],
       ["invalid_repo_slug", ["repoSlug"]],
       ["invalid_workspace_root", ["workspaceRoot"]],
-      ["invalid_codex_binary", ["executorBinary"]],
+      ["invalid_executor_binary", ["executorBinary"]],
     ],
   );
   assert.match(

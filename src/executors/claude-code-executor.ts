@@ -68,7 +68,7 @@ export function detectClaudeCodeCapabilities(
  * - `--dangerously-skip-permissions` for autonomous operation
  * - `--add-dir <workspace>` for workspace access
  */
-function buildClaudeCodeArgs(
+export function buildClaudeCodeArgs(
   config: SupervisorConfig,
   workspacePath: string,
   prompt: string,

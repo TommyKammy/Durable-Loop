@@ -47,7 +47,7 @@ test("diagnoseSupervisorHost reports representative auth, state, and workspace f
     repoPath,
     workspaceRoot,
     stateFile,
-    codexBinary: path.join(root, "missing-codex"),
+    executorBinary: path.join(root, "missing-codex"),
   });
   const trackedState: SupervisorStateFile = {
     activeIssueNumber: 102,
@@ -120,7 +120,7 @@ test("renderDoctorReport surfaces explicit release publication gate posture", as
     repoPath: path.join(root, "repo"),
     workspaceRoot: path.join(root, "workspaces"),
     stateFile: path.join(root, "state.json"),
-    codexBinary: process.execPath,
+    executorBinary: process.execPath,
     releaseReadinessGate: "block_release_publication",
   });
   await fs.mkdir(config.repoPath, { recursive: true });
@@ -160,7 +160,7 @@ test("diagnoseSupervisorHost ignores recovery-only synthetic parent epic records
       repoPath,
       workspaceRoot,
       stateFile,
-      codexBinary: process.execPath,
+      executorBinary: process.execPath,
     }),
     authStatus: async () => ({ ok: true, message: null }),
     loadState: async () => ({
@@ -228,7 +228,7 @@ test("diagnoseSupervisorHost surfaces host-migration path repair and journal reh
       repoPath,
       workspaceRoot,
       stateFile,
-      codexBinary: process.execPath,
+      executorBinary: process.execPath,
       issueJournalRelativePath: ".codex-supervisor/issues/{issueNumber}/issue-journal.md",
     }),
     authStatus: async () => ({ ok: true, message: null }),
@@ -308,7 +308,7 @@ test("diagnoseSupervisorHost degrades per-issue host inspection failures and con
       repoPath,
       workspaceRoot,
       stateFile,
-      codexBinary: process.execPath,
+      executorBinary: process.execPath,
       issueJournalRelativePath: ".codex-supervisor/issues/{issueNumber}/issue-journal.md",
     }),
     authStatus: async () => ({ ok: true, message: null }),
@@ -368,7 +368,7 @@ test("diagnoseSupervisorHost degrades malformed synthetic recovery records witho
       repoPath,
       workspaceRoot,
       stateFile,
-      codexBinary: process.execPath,
+      executorBinary: process.execPath,
     }),
     authStatus: async () => ({ ok: true, message: null }),
     loadState: async () => ({
@@ -423,7 +423,7 @@ test("diagnoseSupervisorHost records reconciliation backlog reload failures with
       repoPath,
       workspaceRoot,
       stateFile,
-      codexBinary: process.execPath,
+      executorBinary: process.execPath,
     }),
     authStatus: async () => ({ ok: true, message: null }),
     loadState: async () => {
@@ -474,7 +474,7 @@ test("diagnoseSupervisorHost does not skip synthetic-like records missing recove
       repoPath,
       workspaceRoot,
       stateFile,
-      codexBinary: process.execPath,
+      executorBinary: process.execPath,
     }),
     authStatus: async () => ({ ok: true, message: null }),
     loadState: async () => ({
@@ -730,7 +730,7 @@ test("diagnoseSupervisorHost reports inherited host Codex defaults in doctor out
       repoPath,
       workspaceRoot,
       stateFile,
-      codexBinary: process.execPath,
+      executorBinary: process.execPath,
       codexModelStrategy: "inherit",
     }),
     authStatus: async () => ({ ok: true, message: null }),
@@ -801,7 +801,7 @@ test("diagnoseSupervisorHost surfaces orphan prune candidates and representative
       repoPath,
       workspaceRoot,
       stateFile,
-      codexBinary: process.execPath,
+      executorBinary: process.execPath,
       cleanupDoneWorkspacesAfterHours: -1,
       maxDoneWorkspaces: -1,
       cleanupOrphanedWorkspacesAfterHours: 24,
@@ -854,7 +854,7 @@ test("diagnoseSupervisorHost reports unsafe orphan prune targets when branch nam
       repoPath,
       workspaceRoot,
       stateFile,
-      codexBinary: process.execPath,
+      executorBinary: process.execPath,
       branchPrefix: "bad ref ",
       cleanupDoneWorkspacesAfterHours: 24,
       maxDoneWorkspaces: -1,
@@ -889,7 +889,7 @@ test("diagnoseBootstrapReadiness returns structured ready config and host summar
       defaultBranch: "main",
       workspaceRoot,
       stateFile: path.join(root, "state.json"),
-      codexBinary: process.execPath,
+      executorBinary: process.execPath,
       branchPrefix: "codex/issue-",
       reviewBotLogins: [],
     }),
@@ -934,7 +934,7 @@ test("diagnoseSetupReadiness returns typed first-run setup state distinct from d
       defaultBranch: "main",
       workspaceRoot,
       stateFile: path.join(root, "state.json"),
-      codexBinary: process.execPath,
+      executorBinary: process.execPath,
       branchPrefix: "codex/issue-",
       reviewBotLogins: [],
     }),
@@ -957,7 +957,7 @@ test("diagnoseSetupReadiness returns typed first-run setup state distinct from d
       ["defaultBranch", "configured", "config", true, "git_ref"],
       ["workspaceRoot", "configured", "config", true, "directory_path"],
       ["stateFile", "configured", "config", true, "file_path"],
-      ["codexBinary", "configured", "config", true, "executable_path"],
+      ["executorBinary", "configured", "config", true, "executable_path"],
       ["branchPrefix", "configured", "config", true, "text"],
       ["workspacePreparationCommand", "missing", "config", true, "text"],
       ["localCiCommand", "missing", "config", true, "text"],
@@ -1068,7 +1068,7 @@ test("diagnoseSetupReadiness recommends a repo-owned local CI candidate when loc
       defaultBranch: "main",
       workspaceRoot,
       stateFile: path.join(root, "state.json"),
-      codexBinary: process.execPath,
+      executorBinary: process.execPath,
       branchPrefix: "codex/issue-",
       trustMode: "trusted_repo_and_authors",
       executionSafetyMode: "unsandboxed_autonomous",
@@ -1124,7 +1124,7 @@ test("diagnoseSetupReadiness still detects a repo-owned local CI candidate when 
       defaultBranch: "main",
       workspaceRoot,
       stateFile: path.join(root, "state.json"),
-      codexBinary: process.execPath,
+      executorBinary: process.execPath,
       branchPrefix: "invalid branch prefix with spaces",
       reviewBotLogins: ["chatgpt-codex-connector"],
     }),
@@ -1179,7 +1179,7 @@ test("diagnoseSetupReadiness prefers the configured local CI command over repo-o
       defaultBranch: "main",
       workspaceRoot,
       stateFile: path.join(root, "state.json"),
-      codexBinary: process.execPath,
+      executorBinary: process.execPath,
       branchPrefix: "codex/issue-",
       trustMode: "trusted_repo_and_authors",
       executionSafetyMode: "unsandboxed_autonomous",
@@ -1226,7 +1226,7 @@ test("diagnoseSetupReadiness warns when localCiCommand is configured without wor
       defaultBranch: "main",
       workspaceRoot,
       stateFile: path.join(root, "state.json"),
-      codexBinary: process.execPath,
+      executorBinary: process.execPath,
       branchPrefix: "codex/issue-",
       trustMode: "trusted_repo_and_authors",
       executionSafetyMode: "unsandboxed_autonomous",
@@ -1273,7 +1273,7 @@ test("diagnoseSetupReadiness surfaces a structured local CI command as configure
       defaultBranch: "main",
       workspaceRoot,
       stateFile: path.join(root, "state.json"),
-      codexBinary: process.execPath,
+      executorBinary: process.execPath,
       branchPrefix: "codex/issue-",
       trustMode: "trusted_repo_and_authors",
       executionSafetyMode: "unsandboxed_autonomous",
@@ -1325,7 +1325,7 @@ test("diagnoseSetupReadiness preserves structured local CI warnings when config 
       defaultBranch: "main",
       workspaceRoot,
       stateFile: path.join(root, "state.json"),
-      codexBinary: process.execPath,
+      executorBinary: process.execPath,
       branchPrefix: "codex/issue-[",
       reviewBotLogins: ["chatgpt-codex-connector"],
       localCiCommand: {
@@ -1374,7 +1374,7 @@ test("diagnoseSetupReadiness suppresses the local CI warning when invalid config
       defaultBranch: "main",
       workspaceRoot,
       stateFile: path.join(root, "state.json"),
-      codexBinary: process.execPath,
+      executorBinary: process.execPath,
       branchPrefix: "codex/issue-[",
       reviewBotLogins: ["chatgpt-codex-connector"],
       localCiCommand: {
@@ -1569,7 +1569,7 @@ test("doctor raw host diagnostics collector returns checks without operator deci
       repoPath,
       workspaceRoot,
       stateFile,
-      codexBinary: process.execPath,
+      executorBinary: process.execPath,
     }),
     authStatus: async () => ({ ok: true, message: null }),
     loadState: async () => ({
@@ -1947,7 +1947,7 @@ test("diagnoseSupervisorHost and renderDoctorReport surface paginated candidate 
       repoPath,
       workspaceRoot,
       stateFile,
-      codexBinary: process.execPath,
+      executorBinary: process.execPath,
       candidateDiscoveryFetchWindow: 250,
     }),
     authStatus: async () => ({ ok: true, message: null }),
@@ -1986,7 +1986,7 @@ test("diagnoseSupervisorHost uses a strict default state loader for existing inv
       repoPath,
       workspaceRoot,
       stateFile,
-      codexBinary: process.execPath,
+      executorBinary: process.execPath,
     }),
     authStatus: async () => ({ ok: true, message: null }),
   });
@@ -2069,7 +2069,7 @@ test("diagnoseSupervisorHost surfaces captured sqlite corruption findings in doc
       workspaceRoot,
       stateBackend: "sqlite",
       stateFile,
-      codexBinary: process.execPath,
+      executorBinary: process.execPath,
     }),
     authStatus: async () => ({ ok: true, message: null }),
   });
@@ -2115,7 +2115,7 @@ test("diagnoseSupervisorHost exposes tracked PR mismatches when GitHub is ready 
     repoPath,
     workspaceRoot,
     stateFile,
-    codexBinary: process.execPath,
+    executorBinary: process.execPath,
     localCiCommand: "npm run ci:local",
   });
   const trackedState: SupervisorStateFile = {
@@ -2202,7 +2202,7 @@ test("diagnoseSupervisorHost skips tracked PR hydration for historical done reco
     repoPath,
     workspaceRoot,
     stateFile,
-    codexBinary: process.execPath,
+    executorBinary: process.execPath,
     localCiCommand: "npm run ci:local",
   });
 
@@ -2306,7 +2306,7 @@ test("diagnoseSupervisorHost exposes stale_review_bot tracked PR mismatches when
     repoPath,
     workspaceRoot,
     stateFile,
-    codexBinary: process.execPath,
+    executorBinary: process.execPath,
     localCiCommand: "npm run ci:local",
   });
   const trackedState: SupervisorStateFile = {
@@ -2390,7 +2390,7 @@ test("diagnoseSupervisorHost preserves draft tracked PR verification blockers in
     repoPath,
     workspaceRoot,
     stateFile,
-    codexBinary: process.execPath,
+    executorBinary: process.execPath,
     localCiCommand: "npm run verify:paths",
   });
   const trackedState: SupervisorStateFile = {
@@ -2493,7 +2493,7 @@ test("diagnoseSupervisorHost marks old-head ready-promotion blockers as stale", 
     repoPath,
     workspaceRoot,
     stateFile,
-    codexBinary: process.execPath,
+    executorBinary: process.execPath,
     localCiCommand: "npm run verify:paths",
   });
   const trackedState: SupervisorStateFile = {
@@ -2590,7 +2590,7 @@ test("diagnoseSupervisorHost marks same-head ready-promotion blockers as stale w
     repoPath,
     workspaceRoot,
     stateFile,
-    codexBinary: process.execPath,
+    executorBinary: process.execPath,
     localCiCommand: "npm run verify:paths",
   });
   const trackedState: SupervisorStateFile = {
@@ -2697,7 +2697,7 @@ test("diagnoseSupervisorHost keeps same-head host-local ready-promotion blockers
     repoPath,
     workspaceRoot,
     stateFile,
-    codexBinary: process.execPath,
+    executorBinary: process.execPath,
     localCiCommand: "npm run verify:paths",
   });
   const trackedState: SupervisorStateFile = {
@@ -2813,7 +2813,7 @@ test("diagnoseSupervisorHost exposes host-local CI blocker details for tracked P
     repoPath,
     workspaceRoot,
     stateFile,
-    codexBinary: process.execPath,
+    executorBinary: process.execPath,
     localCiCommand: "npm run ci:local",
   });
   const trackedState: SupervisorStateFile = {
@@ -2917,7 +2917,7 @@ test("diagnoseSupervisorHost caps rendered sqlite corruption details and summari
       workspaceRoot,
       stateBackend: "sqlite",
       stateFile,
-      codexBinary: process.execPath,
+      executorBinary: process.execPath,
     }),
     authStatus: async () => ({ ok: true, message: null }),
   });

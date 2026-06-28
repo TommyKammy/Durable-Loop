@@ -40,7 +40,7 @@ export async function runCodexReviewTurn(args: LocalReviewTurnRequest): Promise<
   );
   const executionSafetyArgs = buildCodexExecutionSafetyArgs(args.config);
   const result = await runCommand(
-    args.config.codexBinary,
+    args.config.executorBinary,
     [
       "exec",
       ...overrideArgs,

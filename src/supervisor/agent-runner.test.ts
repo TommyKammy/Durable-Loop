@@ -36,7 +36,7 @@ function createConfig(overrides: Partial<SupervisorConfig> = {}): SupervisorConf
     workspaceRoot: "/tmp/workspaces",
     stateBackend: "json",
     stateFile: "/tmp/state.json",
-    codexBinary: "/usr/bin/codex",
+    executorBinary: "/usr/bin/codex",
     codexModelStrategy: "inherit",
     codexReasoningEffortByState: {},
     codexReasoningEscalateOnRepeatedFailure: true,
@@ -534,11 +534,11 @@ test("createCodexAgentRunner normalizes Codex execution errors into the shared f
 test("createCodexAgentRunner preserves bounded noisy stderr for real non-zero Codex subprocess exits", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agent-runner-test-"));
   const workspacePath = path.join(root, "workspace");
-  const codexBinary = path.join(root, "fake-codex.sh");
+  const executorBinary = path.join(root, "fake-codex.sh");
   await fs.mkdir(workspacePath, { recursive: true });
 
   await writeExecutableScript(
-    codexBinary,
+    executorBinary,
     `#!/bin/sh
 exec "${process.execPath}" -e '
 const fs = require("node:fs");
@@ -581,7 +581,7 @@ fs.writeFileSync(out, [
 `,
   );
 
-  const config = createConfig({ codexBinary });
+  const config = createConfig({ executorBinary });
   const runner = createCodexAgentRunner({ config });
   const result = await runner.runTurn({
     ...createStartTurnContext(config),
@@ -600,11 +600,11 @@ fs.writeFileSync(out, [
 test("createCodexAgentRunner preserves timeout summaries for real Codex subprocess timeouts", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agent-runner-test-"));
   const workspacePath = path.join(root, "workspace");
-  const codexBinary = path.join(root, "fake-codex-timeout.sh");
+  const executorBinary = path.join(root, "fake-codex-timeout.sh");
   await fs.mkdir(workspacePath, { recursive: true });
 
   await writeExecutableScript(
-    codexBinary,
+    executorBinary,
     `#!/bin/sh
 exec "${process.execPath}" -e '
 const fs = require("node:fs");
@@ -643,7 +643,7 @@ void (async () => {
   );
 
   const config = createConfig({
-    codexBinary,
+    executorBinary,
     codexExecTimeoutMinutes: 0.001,
   });
   const runner = createCodexAgentRunner({ config });
@@ -704,11 +704,11 @@ test("createCodexAgentRunner preserves timeout summaries when non-zero Codex std
 });
 
 test("detectCodexCliCapabilities keeps Codex-compatible defaults conservative for non-codex binaries", () => {
-  assert.deepEqual(detectCodexCliCapabilities({ codexBinary: "/usr/local/bin/codex" }), {
+  assert.deepEqual(detectCodexCliCapabilities({ executorBinary: "/usr/local/bin/codex" }), {
     supportsResume: true,
     supportsStructuredResult: true,
   });
-  assert.deepEqual(detectCodexCliCapabilities({ codexBinary: "/usr/local/bin/custom-agent" }), {
+  assert.deepEqual(detectCodexCliCapabilities({ executorBinary: "/usr/local/bin/custom-agent" }), {
     supportsResume: false,
     supportsStructuredResult: false,
   });

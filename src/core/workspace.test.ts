@@ -19,7 +19,7 @@ function createConfig(root: string): SupervisorConfig {
     workspaceRoot: path.join(root, "workspaces"),
     stateBackend: "json",
     stateFile: path.join(root, "state.json"),
-    codexBinary: "/usr/bin/codex",
+    executorBinary: "/usr/bin/codex",
     codexModelStrategy: "inherit",
     codexReasoningEffortByState: {},
     codexReasoningEscalateOnRepeatedFailure: true,

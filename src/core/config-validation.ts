@@ -13,7 +13,7 @@ const REQUIRED_STRING_CONFIG_FIELDS = [
   "defaultBranch",
   "workspaceRoot",
   "stateFile",
-  "codexBinary",
+  "executorBinary",
   "branchPrefix",
 ] as const;
 
@@ -21,7 +21,7 @@ const STARTER_PROFILE_PLACEHOLDERS: Record<string, Set<string>> = {
   repoPath: new Set(["/absolute/path/to/managed-repo"]),
   repoSlug: new Set(["OWNER/REPO", "REPLACE_ME"]),
   workspaceRoot: new Set(["/absolute/path/to/worktrees"]),
-  codexBinary: new Set(["/absolute/path/to/codex"]),
+  executorBinary: new Set(["/absolute/path/to/codex"]),
   workspacePreparationCommand: new Set(["<replace-with-repo-owned-setup-command>"]),
   localCiCommand: new Set(["<replace-with-repo-owned-pre-pr-command>"]),
 };
@@ -33,35 +33,29 @@ function hasNonEmptyString(value: unknown): boolean {
 }
 
 /**
- * Collapse the executor-neutral `executorBinary` alias into the canonical
- * `codexBinary` field so that every raw-document consumer (placeholder scan,
- * required-field check, setup fields, parser) deals only with `codexBinary`.
+ * Collapse the legacy `codexBinary` input alias into the canonical
+ * `executorBinary` field so that every raw-document consumer (placeholder scan,
+ * required-field check, setup fields, parser) deals only with `executorBinary`.
  *
- * `executorBinary` is the preferred operator-facing key, so a usable one
- * (non-empty and not a starter placeholder) wins even when a legacy `codexBinary`
- * is also present — the common migration case of adding `executorBinary` beside
- * an old `codexBinary` uses the new value rather than silently ignoring it. When
- * `executorBinary` is not usable, a usable `codexBinary` is kept; when neither is
- * usable but a placeholder alias remains, it is surfaced so the placeholder scan
- * can flag it. The alias key is removed after collapsing.
+ * `executorBinary` is the canonical key, so a usable one (non-empty and not a
+ * starter placeholder) wins even when a legacy `codexBinary` is also present.
+ * When `executorBinary` is not usable but a legacy `codexBinary` carries a
+ * value, that value is adopted (covering both real legacy configs and a leftover
+ * placeholder, which downstream scans still flag). The legacy key is always
+ * removed after collapsing, so only the canonical key is written back.
  */
 export function normalizeConfigDocument(raw: Record<string, unknown>): Record<string, unknown> {
-  if (!("executorBinary" in raw)) {
+  if (!("codexBinary" in raw)) {
     return raw;
   }
   const normalized = { ...raw };
   const executorBinaryUsable =
     hasNonEmptyString(normalized.executorBinary) &&
-    !isStarterProfilePlaceholder("codexBinary", normalized.executorBinary);
-  const codexBinaryUsable =
-    hasNonEmptyString(normalized.codexBinary) &&
-    !isStarterProfilePlaceholder("codexBinary", normalized.codexBinary);
-  if (executorBinaryUsable) {
-    normalized.codexBinary = normalized.executorBinary;
-  } else if (!codexBinaryUsable && hasNonEmptyString(normalized.executorBinary)) {
-    normalized.codexBinary = normalized.executorBinary;
+    !isStarterProfilePlaceholder("executorBinary", normalized.executorBinary);
+  if (!executorBinaryUsable && hasNonEmptyString(normalized.codexBinary)) {
+    normalized.executorBinary = normalized.codexBinary;
   }
-  delete normalized.executorBinary;
+  delete normalized.codexBinary;
   return normalized;
 }
 
@@ -106,7 +100,7 @@ export function buildStarterProfilePlaceholderFieldMessage(field: string, value:
       return "Repository slug still contains a starter placeholder. Replace it with the GitHub owner/repo slug for the managed repository.";
     case "workspaceRoot":
       return "Workspace root still contains a starter placeholder. Replace it with the directory where issue worktrees should be created.";
-    case "codexBinary":
+    case "executorBinary":
       return "Codex binary still contains a starter placeholder. Replace it with a PATH command such as codex or the path to the Codex executable.";
     case "workspacePreparationCommand":
       return "Workspace preparation command still contains a starter placeholder. Replace it with the repo-owned setup command or clear it intentionally.";

@@ -63,11 +63,11 @@ export interface CreateCodexAgentRunnerOptions {
 }
 
 export function detectCodexCliCapabilities(
-  config?: Pick<SupervisorConfig, "codexBinary" | "executorKind"> | null,
+  config?: Pick<SupervisorConfig, "executorBinary" | "executorKind"> | null,
 ): AgentRunnerCapabilities {
   // An explicit executorKind proves the CLI even when the binary is an alias
   // (e.g. "/usr/local/bin/cx"); otherwise fall back to the binary name.
-  const binaryName = basename(config?.codexBinary ?? "codex").toLowerCase();
+  const binaryName = basename(config?.executorBinary ?? "codex").toLowerCase();
   const looksLikeCodex = config?.executorKind === "codex" || binaryName.includes("codex");
 
   return {

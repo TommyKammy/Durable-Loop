@@ -235,21 +235,20 @@ function parseExecutorKind(value: unknown): { executorKind?: ConfiguredExecutorK
 }
 
 /**
- * Resolve the executor binary path. `codexBinary` is the canonical field and
- * takes precedence; `executorBinary` is accepted as an executor-neutral alias
- * only when `codexBinary` is not set, so operators are not forced into the
- * Codex-named key. Keeping `codexBinary` canonical means setup-writer edits
- * (which target `codexBinary`) always take effect and a malformed
- * `executorBinary` cannot shadow a valid `codexBinary`.
+ * Resolve the executor binary path. `executorBinary` is the canonical key and
+ * takes precedence; `codexBinary` is accepted as a read-only legacy alias only
+ * when `executorBinary` is not set, so configs written before the rename keep
+ * working. (Document load normally collapses `codexBinary` into `executorBinary`
+ * via normalizeConfigDocument; this fallback covers direct parser callers.)
  */
 function resolveExecutorBinaryConfigValue(raw: Record<string, unknown>): string {
-  if (typeof raw.codexBinary === "string" && raw.codexBinary.trim() !== "") {
-    return raw.codexBinary;
-  }
   if (typeof raw.executorBinary === "string" && raw.executorBinary.trim() !== "") {
     return raw.executorBinary;
   }
-  return assertString(raw.codexBinary, "executorBinary (or codexBinary)");
+  if (typeof raw.codexBinary === "string" && raw.codexBinary.trim() !== "") {
+    return raw.codexBinary;
+  }
+  return assertString(raw.executorBinary, "executorBinary (or codexBinary)");
 }
 
 function assertPattern(value: string, label: string, pattern: RegExp): string {
@@ -485,7 +484,7 @@ export function parseSupervisorConfigDocument(raw: Record<string, unknown>, reso
       typeof raw.stateBootstrapFile === "string" && raw.stateBootstrapFile.trim() !== ""
         ? resolveMaybeRelative(configDir, raw.stateBootstrapFile)
         : undefined,
-    codexBinary: resolveCommandLikeValue(configDir, resolveExecutorBinaryConfigValue(raw)),
+    executorBinary: resolveCommandLikeValue(configDir, resolveExecutorBinaryConfigValue(raw)),
     ...parseExecutorKind(raw.executorKind),
     trustMode:
       typeof raw.trustMode === "string" && VALID_TRUST_MODES.has(raw.trustMode as TrustMode)

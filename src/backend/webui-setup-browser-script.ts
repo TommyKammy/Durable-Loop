@@ -69,7 +69,7 @@ export function renderSetupBrowserScript(): string {
         "defaultBranch",
         "workspaceRoot",
         "stateFile",
-        "codexBinary",
+        "executorBinary",
         "branchPrefix",
         "localCiCommand",
         "trustMode",

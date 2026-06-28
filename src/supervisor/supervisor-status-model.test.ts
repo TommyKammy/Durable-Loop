@@ -17,7 +17,7 @@ function createConfig(overrides: Partial<SupervisorConfig> = {}): SupervisorConf
     workspaceRoot: "/tmp/workspaces",
     stateBackend: "json",
     stateFile: "/tmp/state.json",
-    codexBinary: "/usr/bin/codex",
+    executorBinary: "/usr/bin/codex",
     trustMode: "trusted_repo_and_authors",
     executionSafetyMode: "unsandboxed_autonomous",
     codexModelStrategy: "inherit",

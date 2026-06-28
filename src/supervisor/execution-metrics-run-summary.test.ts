@@ -81,7 +81,7 @@ function createPreparationConfig(overrides: Partial<SupervisorConfig> = {}): Sup
     workspaceRoot: "/tmp/workspaces",
     stateBackend: "json",
     stateFile: "/tmp/state.json",
-    codexBinary: "/usr/bin/codex",
+    executorBinary: "/usr/bin/codex",
     codexModelStrategy: "inherit",
     codexReasoningEffortByState: {},
     codexReasoningEscalateOnRepeatedFailure: true,

@@ -371,7 +371,7 @@ async function diagnoseGitHubAuth(
 }
 
 async function diagnoseCodexCli(config: SupervisorConfig): Promise<DoctorCheck> {
-  const binary = config.codexBinary;
+  const binary = config.executorBinary;
 
   try {
     if (path.isAbsolute(binary) || /[\\/]/.test(binary)) {

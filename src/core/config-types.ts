@@ -164,10 +164,10 @@ export interface SupervisorConfig {
   stateBackend: "json" | "sqlite";
   stateFile: string;
   stateBootstrapFile?: string;
-  codexBinary: string;
+  executorBinary: string;
   /**
    * Explicit executor selection. When set, it takes precedence over inferring
-   * the kind from `codexBinary`. When unset, the kind is inferred from the
+   * the kind from `executorBinary`. When unset, the kind is inferred from the
    * binary path for backward compatibility.
    */
   executorKind?: ConfiguredExecutorKind;

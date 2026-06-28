@@ -22,7 +22,7 @@ export function createConfig(overrides: Partial<SupervisorConfig> = {}): Supervi
     workspaceRoot: "/tmp/workspaces",
     stateBackend: "json",
     stateFile: "/tmp/state.json",
-    codexBinary: "/usr/bin/codex",
+    executorBinary: "/usr/bin/codex",
     trustMode: "trusted_repo_and_authors",
     executionSafetyMode: "unsandboxed_autonomous",
     codexModelStrategy: "inherit",
@@ -279,7 +279,7 @@ export async function createSupervisorFixture(options: {
   const repoPath = path.join(root, "repo");
   const workspaceRoot = path.join(root, "workspaces");
   const stateFile = path.join(root, "state.json");
-  const codexBinary = path.join(root, "fake-codex.sh");
+  const executorBinary = path.join(root, "fake-codex.sh");
 
   git(["init", "--bare", remotePath]);
   await fs.mkdir(seedPath, { recursive: true });
@@ -317,8 +317,8 @@ export async function createSupervisorFixture(options: {
     "exit 0",
     "",
   ];
-  await fs.writeFile(codexBinary, codexScriptLines.join("\n"), "utf8");
-  await fs.chmod(codexBinary, 0o755);
+  await fs.writeFile(executorBinary, codexScriptLines.join("\n"), "utf8");
+  await fs.chmod(executorBinary, 0o755);
 
   return {
     repoPath,
@@ -328,7 +328,7 @@ export async function createSupervisorFixture(options: {
       repoPath,
       workspaceRoot,
       stateFile,
-      codexBinary,
+      executorBinary,
       issueJournalMaxChars: 12000,
     }),
   };

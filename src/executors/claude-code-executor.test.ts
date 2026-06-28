@@ -46,7 +46,7 @@ function createConfig(overrides: Partial<SupervisorConfig> = {}): SupervisorConf
     workspaceRoot: "/tmp/workspaces",
     stateBackend: "json",
     stateFile: "/tmp/state.json",
-    codexBinary: "/usr/bin/claude",
+    executorBinary: "/usr/bin/claude",
     codexModelStrategy: "inherit",
     codexReasoningEffortByState: {},
     codexReasoningEscalateOnRepeatedFailure: true,
@@ -161,7 +161,7 @@ function createResumeContext(config: SupervisorConfig, sessionId: string): Agent
 // ===== Capability detection tests =====
 
 test("ClaudeCodeExecutor reports supportsResume=true for claude binary", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/claude" });
+  const config = createConfig({ executorBinary: "/usr/bin/claude" });
   const executor = new ClaudeCodeExecutor({ config });
   assert.equal(executor.capabilities.supportsResume, true);
   assert.equal(executor.capabilities.supportsStructuredResult, true);
@@ -169,7 +169,7 @@ test("ClaudeCodeExecutor reports supportsResume=true for claude binary", () => {
 });
 
 test("ClaudeCodeExecutor reports supportsResume=false for non-claude binary", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/custom-agent" });
+  const config = createConfig({ executorBinary: "/usr/bin/custom-agent" });
   const executor = new ClaudeCodeExecutor({
     config,
     probeCapabilitiesImpl: () => detectClaudeCodeCapabilities(config),
@@ -181,19 +181,19 @@ test("ClaudeCodeExecutor reports supportsResume=false for non-claude binary", ()
 });
 
 test("detectClaudeCodeCapabilities returns true for claude binary", () => {
-  const caps = detectClaudeCodeCapabilities({ codexBinary: "/usr/local/bin/claude" });
+  const caps = detectClaudeCodeCapabilities({ executorBinary: "/usr/local/bin/claude" });
   assert.equal(caps.supportsResume, true);
   assert.equal(caps.supportsStructuredResult, true);
 });
 
 test("detectClaudeCodeCapabilities returns true for claude-code binary", () => {
-  const caps = detectClaudeCodeCapabilities({ codexBinary: "/usr/bin/claude-code" });
+  const caps = detectClaudeCodeCapabilities({ executorBinary: "/usr/bin/claude-code" });
   assert.equal(caps.supportsResume, true);
   assert.equal(caps.supportsStructuredResult, true);
 });
 
 test("detectClaudeCodeCapabilities returns false for non-claude binary", () => {
-  const caps = detectClaudeCodeCapabilities({ codexBinary: "/usr/bin/codex" });
+  const caps = detectClaudeCodeCapabilities({ executorBinary: "/usr/bin/codex" });
   assert.equal(caps.supportsResume, false);
   assert.equal(caps.supportsStructuredResult, false);
 });
@@ -205,13 +205,13 @@ test("detectClaudeCodeCapabilities defaults to claude when no config", () => {
 });
 
 test("detectClaudeCodeCapabilities honors an explicit executorKind for an aliased binary", () => {
-  const caps = detectClaudeCodeCapabilities({ codexBinary: "/usr/local/bin/cc", executorKind: "claude" });
+  const caps = detectClaudeCodeCapabilities({ executorBinary: "/usr/local/bin/cc", executorKind: "claude" });
   assert.equal(caps.supportsResume, true);
   assert.equal(caps.supportsStructuredResult, true);
 });
 
 test("ClaudeCodeExecutor reports supportsResume=true for an aliased binary with explicit executorKind", () => {
-  const config = createConfig({ codexBinary: "/usr/local/bin/cc", executorKind: "claude" });
+  const config = createConfig({ executorBinary: "/usr/local/bin/cc", executorKind: "claude" });
   const executor = new ClaudeCodeExecutor({ config });
   assert.equal(executor.capabilities.supportsResume, true);
   assert.equal(executor.capabilities.supportsStructuredResult, true);
@@ -309,20 +309,20 @@ test("ClaudeCodeExecutor preserves sessionId for resume context", async () => {
 // ===== Factory tests =====
 
 test("createExecutor returns ClaudeCodeExecutor for claude binary", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/claude" });
+  const config = createConfig({ executorBinary: "/usr/bin/claude" });
   const executor = createExecutor(config);
   assert.ok(executor instanceof ClaudeCodeExecutor);
   assert.equal(executor.capabilities.supportsReasoningControl, true);
 });
 
 test("createExecutor returns ClaudeCodeExecutor for claude-code binary", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/claude-code" });
+  const config = createConfig({ executorBinary: "/usr/bin/claude-code" });
   const executor = createExecutor(config);
   assert.ok(executor instanceof ClaudeCodeExecutor);
 });
 
 test("createExecutor wraps provided runner for claude config", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/claude" });
+  const config = createConfig({ executorBinary: "/usr/bin/claude" });
   const mockRunner: AgentRunner = {
     capabilities: { supportsResume: false, supportsStructuredResult: false },
     async runTurn() {
@@ -345,12 +345,12 @@ test("createExecutor wraps provided runner for claude config", () => {
 });
 
 test("resolveExecutorKind detects claude", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/claude" });
+  const config = createConfig({ executorBinary: "/usr/bin/claude" });
   assert.equal(resolveExecutorKind(config), "claude");
 });
 
 test("resolveExecutorKind detects claude-code", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/claude-code" });
+  const config = createConfig({ executorBinary: "/usr/bin/claude-code" });
   assert.equal(resolveExecutorKind(config), "claude");
 });
 
@@ -457,8 +457,8 @@ test("ClaudeCodeExecutor returns null structuredResult for unstructured output",
 // ===== Cross-executor consistency tests =====
 
 test("ClaudeCodeExecutor and OpenCodeExecutor produce same result shape", async () => {
-  const claudeConfig = createConfig({ codexBinary: "/usr/bin/claude" });
-  const opencodeConfig = createConfig({ codexBinary: "/usr/bin/opencode" });
+  const claudeConfig = createConfig({ executorBinary: "/usr/bin/claude" });
+  const opencodeConfig = createConfig({ executorBinary: "/usr/bin/opencode" });
 
   const claudeExecutor = new ClaudeCodeExecutor({
     config: claudeConfig,
@@ -485,7 +485,7 @@ test("ClaudeCodeExecutor and OpenCodeExecutor produce same result shape", async 
 // ===== Phase 4 Fix: override impls through createExecutor =====
 
 test("createExecutor passes classifyFailureImpl to ClaudeCodeExecutor", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/claude" });
+  const config = createConfig({ executorBinary: "/usr/bin/claude" });
   const classifyFailureImpl = (_msg: string | null | undefined) => "command_error" as const;
 
   const executor = createExecutor(config, { classifyFailureImpl });
@@ -494,7 +494,7 @@ test("createExecutor passes classifyFailureImpl to ClaudeCodeExecutor", () => {
 });
 
 test("createExecutor passes buildFailureContextImpl to ClaudeCodeExecutor", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/claude" });
+  const config = createConfig({ executorBinary: "/usr/bin/claude" });
   const buildFailureContextImpl = (
     _category: any,
     summary: string,
@@ -516,7 +516,7 @@ test("createExecutor passes buildFailureContextImpl to ClaudeCodeExecutor", () =
 
 test("ClaudeCodeExecutor applies reasoning effort when state is provided", async () => {
   const config = createConfig({
-    codexBinary: "/usr/bin/claude",
+    executorBinary: "/usr/bin/claude",
     codexReasoningEffortByState: { implementing: "high" },
   });
 

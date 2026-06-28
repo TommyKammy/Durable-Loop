@@ -8,7 +8,7 @@ export function createConfig(overrides: Partial<SupervisorConfig> = {}): Supervi
     workspaceRoot: "/tmp/workspaces",
     stateBackend: "json",
     stateFile: "/tmp/state.json",
-    codexBinary: "/usr/bin/codex",
+    executorBinary: "/usr/bin/codex",
     codexModelStrategy: "inherit",
     codexReasoningEffortByState: {},
     codexReasoningEscalateOnRepeatedFailure: true,

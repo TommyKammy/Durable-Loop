@@ -20,7 +20,7 @@ export interface SetupConfigChanges {
   defaultBranch?: string;
   workspaceRoot?: string;
   stateFile?: string;
-  codexBinary?: string;
+  executorBinary?: string;
   branchPrefix?: string;
   workspacePreparationCommand?: string | null;
   localCiCommand?: string | null;
@@ -87,7 +87,7 @@ const CONFIGURABLE_FIELDS: SetupConfigWritableFieldKey[] = [
   "defaultBranch",
   "workspaceRoot",
   "stateFile",
-  "codexBinary",
+  "executorBinary",
   "branchPrefix",
   "workspacePreparationCommand",
   "localCiCommand",
@@ -271,8 +271,11 @@ function normalizeSetupChanges(changes: unknown): SetupConfigChanges {
   if ("stateFile" in raw) {
     normalized.stateFile = assertNonEmptyString(raw.stateFile, "stateFile");
   }
-  if ("codexBinary" in raw) {
-    normalized.codexBinary = assertNonEmptyString(raw.codexBinary, "codexBinary");
+  if ("executorBinary" in raw) {
+    normalized.executorBinary = assertNonEmptyString(raw.executorBinary, "executorBinary");
+  } else if ("codexBinary" in raw) {
+    // Legacy input alias: accept codexBinary but canonicalize to executorBinary.
+    normalized.executorBinary = assertNonEmptyString(raw.codexBinary, "executorBinary");
   }
   if ("branchPrefix" in raw) {
     normalized.branchPrefix = assertGitRef(raw.branchPrefix, "branchPrefix");
@@ -379,11 +382,11 @@ function applySetupChanges(document: Record<string, unknown>, changes: SetupConf
   if (changes.stateFile !== undefined) {
     nextDocument.stateFile = changes.stateFile;
   }
-  if (changes.codexBinary !== undefined) {
-    nextDocument.codexBinary = changes.codexBinary;
-    // executorBinary takes precedence as the preferred alias, so a stale one
-    // would shadow this edit; drop it and canonicalize to codexBinary.
-    delete nextDocument.executorBinary;
+  if (changes.executorBinary !== undefined) {
+    nextDocument.executorBinary = changes.executorBinary;
+    // Drop any stale legacy codexBinary alias so it cannot shadow this edit;
+    // the writer only ever persists the canonical executorBinary key.
+    delete nextDocument.codexBinary;
   }
   if (changes.branchPrefix !== undefined) {
     nextDocument.branchPrefix = changes.branchPrefix;
@@ -558,8 +561,8 @@ function nextSemanticFieldValue(
       return changes.workspaceRoot ?? null;
     case "stateFile":
       return changes.stateFile ?? null;
-    case "codexBinary":
-      return changes.codexBinary ?? null;
+    case "executorBinary":
+      return changes.executorBinary ?? null;
     case "branchPrefix":
       return changes.branchPrefix ?? null;
     case "workspacePreparationCommand":

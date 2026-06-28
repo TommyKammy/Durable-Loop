@@ -45,11 +45,11 @@ import type { PromptBuilder } from "./types";
  * Detect OpenCode CLI capabilities from the binary name.
  */
 export function detectOpenCodeCapabilities(
-  config?: Pick<SupervisorConfig, "codexBinary" | "executorKind"> | null,
+  config?: Pick<SupervisorConfig, "executorBinary" | "executorKind"> | null,
 ): { supportsResume: boolean; supportsStructuredResult: boolean } {
   // An explicit executorKind proves the provider even when the binary is an
   // alias (e.g. "/usr/local/bin/oc"); otherwise fall back to the binary name.
-  const binaryName = basename(config?.codexBinary ?? "opencode").toLowerCase();
+  const binaryName = basename(config?.executorBinary ?? "opencode").toLowerCase();
   const looksLikeOpenCode = config?.executorKind === "opencode" || binaryName.includes("opencode");
 
   return {
@@ -156,7 +156,7 @@ export const runOpenCodeTurn: RunExecutorTurnFn = async (
   const args = buildOpenCodeArgs(config, workspacePath, prompt, state, sessionId);
   const timeoutMs = resolveExecutorTurnTimeoutMinutes(config) * 60_000;
 
-  return runExecutorCliCommand(config.codexBinary, args, {
+  return runExecutorCliCommand(config.executorBinary, args, {
     cwd: workspacePath,
     timeoutMs,
     sessionId,

@@ -14,7 +14,7 @@ async function writeConfig(tempDir: string): Promise<string> {
     workspaceRoot: path.join(tempDir, "workspaces"),
     stateBackend: "json",
     stateFile: path.join(tempDir, "state.json"),
-    codexBinary: "/usr/bin/codex",
+    executorBinary: "/usr/bin/codex",
     reviewBotLogins: ["copilot-pull-request-reviewer"],
     branchPrefix: "codex/issue-",
   }));

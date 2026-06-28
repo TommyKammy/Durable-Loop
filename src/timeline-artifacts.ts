@@ -460,14 +460,14 @@ export function buildIssueRunTimelineExport(args: {
     });
   }
 
-  if (record.executor_session_id !== null || record.last_codex_summary !== null) {
+  if (record.executor_session_id !== null || record.last_executor_summary !== null) {
     setEvent({
       issue_number: record.issue_number,
       pr_number: record.pr_number,
       event_type: "codex_turn",
       timestamp: record.updated_at,
       outcome: record.last_failure_kind === null ? "completed" : "failed",
-      summary: record.last_codex_summary ?? "Codex turn state is recorded.",
+      summary: record.last_executor_summary ?? "Codex turn state is recorded.",
       head_sha: record.last_head_sha,
       remediation_target: null,
       next_action: null,

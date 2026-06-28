@@ -152,7 +152,7 @@ function createUntrackedRecoveredDoneRecord(issueNumber: number): IssueRunRecord
     review_follow_up_remaining: 0,
     workspace_restore_source: null,
     workspace_restore_ref: null,
-    last_codex_summary: null,
+    last_executor_summary: null,
     last_recovery_reason: null,
     last_recovery_at: null,
     issue_definition_fingerprint: null,

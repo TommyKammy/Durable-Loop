@@ -122,7 +122,7 @@ test("buildIssueRunTimelineExport orders available major lifecycle events", () =
     pr_number: 1748,
     state: "done",
     executor_session_id: "session-1742",
-    last_codex_summary: "Implemented timeline export.",
+    last_executor_summary: "Implemented timeline export.",
     latest_local_ci_result: {
       outcome: "passed",
       summary: "npm run build passed.",
@@ -277,7 +277,7 @@ test("buildIssueRunTimelineExport keeps sparse historical records explicit", () 
       last_recovery_reason: null,
       last_recovery_at: null,
       executor_session_id: null,
-      last_codex_summary: null,
+      last_executor_summary: null,
       updated_at: "2026-04-25T10:12:00Z",
     }),
     pr: null,

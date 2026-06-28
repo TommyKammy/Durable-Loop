@@ -303,7 +303,7 @@ export interface IssueRunRecord {
   review_follow_up_remaining?: number;
   workspace_restore_source?: WorkspaceRestoreSource | null;
   workspace_restore_ref?: string | null;
-  last_codex_summary: string | null;
+  last_executor_summary: string | null;
   last_recovery_reason: string | null;
   last_recovery_at: string | null;
   issue_definition_fingerprint?: string | null;

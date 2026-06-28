@@ -120,7 +120,7 @@ function createRecord(overrides: Partial<IssueRunRecord> = {}): IssueRunRecord {
     repeated_blocker_count: 0,
     repeated_failure_signature_count: 1,
     last_head_sha: "abcdef1",
-    last_codex_summary: null,
+    last_executor_summary: null,
     last_recovery_reason: null,
     last_recovery_at: null,
     last_error: "Codex completed without updating the issue journal for issue #366.",

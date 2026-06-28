@@ -411,7 +411,7 @@ export async function executeCodexTurnPhase(
           journalContent = await readIssueJournalImpl(journalPath);
         }
         const effectiveJournalContent = journalContent ?? "";
-        const previousCodexSummary = record.last_codex_summary;
+        const previousCodexSummary = record.last_executor_summary;
         const previousError = record.last_error;
 
         const preparedTurn = await prepareCodexTurnPrompt({
@@ -479,7 +479,7 @@ export async function executeCodexTurnPhase(
         record = stateStore.touch(record, {
           ...dossierConsumptionPatch,
           executor_session_id: turnResult.sessionId,
-          last_codex_summary: truncate(turnResult.supervisorMessage),
+          last_executor_summary: truncate(turnResult.supervisorMessage),
           last_failure_kind: turnResult.failureKind,
           last_error:
             turnResult.exitCode === 0

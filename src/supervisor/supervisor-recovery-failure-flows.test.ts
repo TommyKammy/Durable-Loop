@@ -32,7 +32,7 @@ test("recoverUnexpectedCodexTurnFailure fails closed when post-turn refresh blow
     pr_number: null,
     last_head_sha: "deadbee",
     executor_session_id: "thread-123",
-    last_codex_summary: "Created a dirty checkpoint and paused before opening a PR.",
+    last_executor_summary: "Created a dirty checkpoint and paused before opening a PR.",
     blocked_reason: null,
     last_error: null,
     last_failure_kind: null,
@@ -89,7 +89,7 @@ test("recoverUnexpectedCodexTurnFailure fails closed when post-turn refresh blow
   assert.equal(updated.last_failure_kind, "command_error");
   assert.match(updated.last_error ?? "", /post-turn refresh blew up/);
   assert.equal(updated.executor_session_id, "thread-123");
-  assert.match(updated.last_codex_summary ?? "", /dirty checkpoint/i);
+  assert.match(updated.last_executor_summary ?? "", /dirty checkpoint/i);
   assert.equal(updated.blocked_reason, null);
   assert.match(updated.last_failure_context?.summary ?? "", /Supervisor failed while recovering a Codex turn/);
   assert.deepEqual(updated.last_failure_context?.details.slice(0, 4), [

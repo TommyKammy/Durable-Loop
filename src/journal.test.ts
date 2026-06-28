@@ -67,7 +67,7 @@ function createRecord(overrides: Partial<IssueRunRecord> = {}): IssueRunRecord {
     repeated_blocker_count: 0,
     repeated_failure_signature_count: 0,
     last_head_sha: "deadbeef",
-    last_codex_summary: null,
+    last_executor_summary: null,
     last_recovery_reason: null,
     last_recovery_at: null,
     last_error: null,
@@ -156,7 +156,7 @@ test("syncIssueJournal records when a missing local-only journal is rehydrated f
       workspace: tempDir,
       journal_path: journalPath,
       state: "addressing_review",
-      last_codex_summary: "Summary: resume the tracked PR follow-up after recreating the local journal.",
+      last_executor_summary: "Summary: resume the tracked PR follow-up after recreating the local journal.",
       last_error: "Previous host-local handoff text is unavailable on this machine.",
     }),
     journalPath,
@@ -364,7 +364,7 @@ test("syncIssueJournal normalizes absolute local paths before writing durable co
     record: createRecord({
       workspace: tempDir,
       journal_path: journalPath,
-      last_codex_summary: `Summary: Reproduced in ${repoFilePath} with extra context from ${hostOnlyPath}`,
+      last_executor_summary: `Summary: Reproduced in ${repoFilePath} with extra context from ${hostOnlyPath}`,
       last_failure_context: {
         category: "manual",
         summary: `Path leak persisted through ${repoFilePath}`,
@@ -414,7 +414,7 @@ test("syncIssueJournal normalizes inline absolute path substrings and quoted spa
     record: createRecord({
       workspace: tempDir,
       journal_path: journalPath,
-      last_codex_summary: `Summary: path=${repoFilePath} [guide](${repoFilePath}) "${hostOnlyPath}"`,
+      last_executor_summary: `Summary: path=${repoFilePath} [guide](${repoFilePath}) "${hostOnlyPath}"`,
       last_failure_context: {
         category: "manual",
         summary: `Inline path path=${repoFilePath}`,
@@ -469,7 +469,7 @@ test("syncIssueJournal redacts broader non-portable absolute path roots", async 
     record: createRecord({
       workspace: tempDir,
       journal_path: journalPath,
-      last_codex_summary: `Summary: ${nonPortablePaths.join(" | ")}`,
+      last_executor_summary: `Summary: ${nonPortablePaths.join(" | ")}`,
       last_failure_context: {
         category: "manual",
         summary: `Leaked local paths ${nonPortablePaths.join(" and ")}`,
@@ -711,7 +711,7 @@ test("syncIssueJournal keeps the rendered summary failure signature aligned with
       state: "addressing_review",
       last_failure_signature: "PRRT_kwDORgvdZ852EV-a",
       repeated_failure_signature_count: 1,
-      last_codex_summary: [
+      last_executor_summary: [
         "Summary: waiting for refreshed CI checks",
         "State hint: waiting_ci",
         "Blocked reason: none",
@@ -749,7 +749,7 @@ test("syncIssueJournal preserves an appended failure signature when the summary 
       workspace: tempDir,
       journal_path: journalPath,
       last_failure_signature: "retry-budget",
-      last_codex_summary: `Summary: ${"detail ".repeat(700).trim()}`,
+      last_executor_summary: `Summary: ${"detail ".repeat(700).trim()}`,
     }),
     journalPath,
   });
@@ -835,7 +835,7 @@ test("syncIssueJournal preserves a replaced failure signature when the summary i
       workspace: tempDir,
       journal_path: journalPath,
       last_failure_signature: "PRRT_kwDORgvdZ852E4Jy",
-      last_codex_summary: [
+      last_executor_summary: [
         `Summary: ${"detail ".repeat(700).trim()}`,
         "Failure signature: stale-footer",
       ].join("\n"),

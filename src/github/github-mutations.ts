@@ -46,7 +46,7 @@ export class GitHubMutationClient {
       "",
       "This PR was opened by codex-supervisor.",
       "",
-      record.last_codex_summary ? `Latest Codex summary:\n\n${truncate(record.last_codex_summary, 1500)}` : "",
+      record.last_executor_summary ? `Latest Codex summary:\n\n${truncate(record.last_executor_summary, 1500)}` : "",
     ]
       .filter(Boolean)
       .join("\n");

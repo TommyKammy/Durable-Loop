@@ -697,7 +697,7 @@ test("runOnce reclaims a stale stabilizing issue without carrying mismatched tra
         pr_number: 527,
         executor_session_id: "stale-session",
         implementation_attempt_count: 0,
-        last_codex_summary: "Stale summary mentioning PR #527 from another issue.",
+        last_executor_summary: "Stale summary mentioning PR #527 from another issue.",
       }),
     ],
   });
@@ -756,7 +756,7 @@ test("runOnce reclaims a stale stabilizing issue without carrying mismatched tra
   assert.equal(record.state, "reproducing");
   assert.equal(record.pr_number, null);
   assert.equal(record.executor_session_id, null);
-  assert.equal(record.last_codex_summary, "Stale summary mentioning PR #527 from another issue.");
+  assert.equal(record.last_executor_summary, "Stale summary mentioning PR #527 from another issue.");
   assert.equal(resolveCalls, 2);
   assert.deepEqual(resolvedPrNumbers, [527, null]);
 });

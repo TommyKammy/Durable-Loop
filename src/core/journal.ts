@@ -474,7 +474,7 @@ function buildSupervisorSnapshot(args: {
     `- Updated at: ${record.updated_at}`,
     "",
     "## Latest Codex Summary",
-    renderLatestCodexSummary(sanitize(record.last_codex_summary), record.last_failure_signature),
+    renderLatestCodexSummary(sanitize(record.last_executor_summary), record.last_failure_signature),
     "",
     "## Active Failure Context",
     failureContext,
@@ -744,7 +744,7 @@ function shouldAnnotateJournalRehydration(
     | "repair_attempt_count"
     | "pr_number"
     | "executor_session_id"
-    | "last_codex_summary"
+    | "last_executor_summary"
     | "last_error"
     | "last_failure_context"
     | "last_recovery_reason"
@@ -756,7 +756,7 @@ function shouldAnnotateJournalRehydration(
     record.repair_attempt_count > 1 ||
     record.pr_number !== null ||
     record.executor_session_id !== null ||
-    record.last_codex_summary !== null ||
+    record.last_executor_summary !== null ||
     record.last_error !== null ||
     record.last_failure_context !== null ||
     record.last_recovery_reason !== null

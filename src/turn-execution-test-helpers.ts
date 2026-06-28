@@ -118,7 +118,7 @@ export function createRecord(overrides: Partial<IssueRunRecord> = {}): IssueRunR
     last_head_sha: "head-116",
     review_follow_up_head_sha: null,
     review_follow_up_remaining: 0,
-    last_codex_summary: null,
+    last_executor_summary: null,
     last_recovery_reason: null,
     last_recovery_at: null,
     last_error: null,

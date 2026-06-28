@@ -68,7 +68,7 @@ export function detectOpenCodeCapabilities(
  * - `--dangerously-skip-permissions` for autonomous operation
  * - `--dir <workspace>` for workspace isolation
  */
-function buildOpenCodeArgs(
+export function buildOpenCodeArgs(
   config: SupervisorConfig,
   workspacePath: string,
   prompt: string,

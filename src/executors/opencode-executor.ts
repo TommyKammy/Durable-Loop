@@ -20,7 +20,7 @@ import type {
   AgentRunner,
   AgentTurnContext,
   AgentTurnResult,
-} from "../supervisor/agent-runner";
+} from "../agent-contract";
 import type {
   Executor,
   ExecutorCapabilities,

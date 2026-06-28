@@ -21,7 +21,7 @@
  */
 
 import { buildCodexPrompt } from "../codex";
-import type { AgentTurnContext } from "../supervisor/agent-runner";
+import type { AgentTurnContext } from "../agent-contract";
 import type { PromptBuilder, ExecutorKind } from "./types";
 
 /**

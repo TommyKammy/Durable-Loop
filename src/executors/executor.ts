@@ -3,7 +3,7 @@
  */
 
 import type { SupervisorConfig } from "../core/types";
-import type { AgentRunner } from "../supervisor/agent-runner";
+import type { AgentRunner } from "../agent-contract";
 import type { Executor, ExecutorCapabilities, ExecutorKind } from "./types";
 import { CodexExecutor } from "./codex-executor";
 import { MockExecutor } from "./mock-executor";

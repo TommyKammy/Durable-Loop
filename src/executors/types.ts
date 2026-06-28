@@ -10,7 +10,7 @@ import type {
   AgentRunnerCapabilities,
   AgentTurnContext,
   AgentTurnResult,
-} from "../supervisor/agent-runner";
+} from "../agent-contract";
 
 /**
  * Extended capabilities with an optional reasoning-control flag.

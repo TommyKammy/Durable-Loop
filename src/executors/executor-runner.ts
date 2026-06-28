@@ -24,7 +24,7 @@ import type {
   AgentRunnerCapabilities,
   AgentTurnContext,
   AgentTurnResult,
-} from "../supervisor/agent-runner";
+} from "../agent-contract";
 
 /**
  * Result of a provider-specific turn execution.

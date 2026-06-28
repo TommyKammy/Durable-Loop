@@ -18,6 +18,26 @@ import type {
 } from "../core/types";
 import type { PromptBuilder } from "./types";
 import { parseAgentTurnStructuredResult } from "../supervisor/agent-runner";
+
+/**
+ * Build the permission/safety CLI args for a provider-neutral executor, gated on
+ * the configured execution-safety posture rather than hardcoded.
+ *
+ * Mirrors Codex's `buildCodexExecutionSafetyArgs`: in `operator_gated` mode the
+ * CLI's own permission prompts are preserved (no skip flag is emitted); in
+ * `unsandboxed_autonomous` mode (or when unset, the historical default) the
+ * executor runs autonomously with the provider's skip-permissions flag.
+ *
+ * NOTE: the exact OpenCode skip-permissions flag name has not been verified
+ * against the real OpenCode CLI; callers pass the flag string they currently
+ * use, so this change only makes the flag *conditional* without altering it.
+ */
+export function buildExecutorPermissionSafetyArgs(
+  config: Pick<SupervisorConfig, "executionSafetyMode">,
+  skipPermissionsFlag: string,
+): string[] {
+  return config.executionSafetyMode === "operator_gated" ? [] : [skipPermissionsFlag];
+}
 import { buildCodexFailureContext, classifyFailure, classifyTurnError } from "../supervisor/supervisor-failure-helpers";
 import type {
   AgentRunner,

@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { Executor } from "./types";
 import type { AgentTurnResult, StartAgentTurnContext } from "../agent-contract";
-import type { ExecutorTurnResult } from "./executor-runner";
+import { buildExecutorPermissionSafetyArgs, type ExecutorTurnResult } from "./executor-runner";
 import type { GitHubIssue, SupervisorConfig } from "../core/types";
 import { CodexExecutor } from "./codex-executor";
 import { OpenCodeExecutor, buildOpenCodeArgs } from "./opencode-executor";
@@ -245,6 +245,15 @@ describe("CLI arg construction", () => {
     // No session flag when resuming is not requested.
     const fresh = buildOpenCodeArgs(createConfig(), "/ws", "PROMPT", "implementing");
     assert.equal(fresh.includes("--session"), false);
+
+    // operator_gated keeps the CLI's own approval prompts (no skip flag).
+    const gated = buildOpenCodeArgs(
+      createConfig({ executionSafetyMode: "operator_gated" }),
+      "/ws",
+      "PROMPT",
+      "implementing",
+    );
+    assert.equal(gated.includes("--dangerously-skip-permissions"), false);
   });
 
   test("ClaudeCodeExecutor builds correct CLI args", () => {
@@ -260,6 +269,23 @@ describe("CLI arg construction", () => {
 
     const fresh = buildClaudeCodeArgs(createConfig(), "/ws", "PROMPT", "implementing");
     assert.equal(fresh.includes("--resume"), false);
+
+    // operator_gated keeps the CLI's own approval prompts (no skip flag).
+    const gated = buildClaudeCodeArgs(
+      createConfig({ executionSafetyMode: "operator_gated" }),
+      "/ws",
+      "PROMPT",
+      "implementing",
+    );
+    assert.equal(gated.includes("--dangerously-skip-permissions"), false);
+  });
+
+  test("buildExecutorPermissionSafetyArgs gates the skip-permissions flag on executionSafetyMode", () => {
+    assert.deepEqual(
+      buildExecutorPermissionSafetyArgs({ executionSafetyMode: "unsandboxed_autonomous" }, "--skip"),
+      ["--skip"],
+    );
+    assert.deepEqual(buildExecutorPermissionSafetyArgs({ executionSafetyMode: "operator_gated" }, "--skip"), []);
   });
 
   test("CodexExecutor builds correct CLI args (via the Codex policy builders it delegates to)", () => {

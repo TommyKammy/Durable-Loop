@@ -397,14 +397,13 @@ export async function runExecutorCliCommand(
     ? extractSessionIdFromJsonOutput(result.stdout, options.sessionId)
     : options.sessionId ?? null;
 
-  // If the output was truncated by the capture cap and we could not recover a
-  // structured result from it (e.g. a single oversized `--output-format json`
-  // object whose middle was cut), surface it as a bounded failure rather than a
-  // corrupt "success" that would feed empty session/structured state downstream.
-  // (Truncated JSONL whose start/end survived still yields a usable lastMessage
-  // and is treated as success.)
-  if (parseJson && result.stdoutTruncated && lastMessage === "") {
-    const note = `Executor output exceeded the ${EXECUTOR_STDOUT_CAPTURE_LIMIT}-character capture limit and was truncated; no structured result could be parsed.`;
+  // Any truncation in JSON mode makes the structured result unreliable: the
+  // final result line may have been cut from the middle while an earlier
+  // assistant message survives in the preserved head, so even a non-empty
+  // lastMessage may be stale. Surface it as a bounded failure rather than
+  // continuing with stale/empty structured state.
+  if (parseJson && result.stdoutTruncated) {
+    const note = `Executor output exceeded the ${EXECUTOR_STDOUT_CAPTURE_LIMIT}-character capture limit and was truncated; the structured result is unreliable.`;
     return {
       exitCode: result.exitCode === 0 ? 1 : result.exitCode,
       sessionId,

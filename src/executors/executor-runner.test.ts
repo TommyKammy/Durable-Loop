@@ -80,3 +80,22 @@ test("runExecutorCliCommand fails a JSON turn whose oversized single object was 
   assert.equal(result.lastMessage, "");
   assert.match(result.stderr, /capture limit/);
 });
+
+test("runExecutorCliCommand fails a truncated JSONL turn even when a stale early message survives", async () => {
+  // An early assistant message survives in the preserved head, but the final
+  // result line is cut by truncation. The recovered lastMessage is stale, so the
+  // turn must still fail rather than continue with stale structured state.
+  const source =
+    `process.stdout.write('{"type":"assistant","content":"early stale message"}\\n'` +
+    ` + 'a'.repeat(200000)` +
+    ` + '\\n{"type":"result","result":"final"}')`;
+  const result = await runExecutorCliCommand(process.execPath, ["-e", source], {
+    cwd: process.cwd(),
+    timeoutMs: 30_000,
+    parseJsonOutput: true,
+    stdoutCaptureLimitBytes: 4_000,
+  });
+
+  assert.equal(result.exitCode, 1, "truncated JSONL should fail even with a surviving early message");
+  assert.match(result.stderr, /capture limit/);
+});

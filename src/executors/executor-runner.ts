@@ -80,11 +80,15 @@ export function extractSessionIdFromJsonOutput(
     try {
       const event = JSON.parse(trimmed) as Record<string, unknown>;
       const type = typeof event.type === "string" ? event.type : "";
-      const idFields = ["session_id", "sessionId", "thread_id", "threadId", "id"];
+      // Session-specific field names. A bare `id` is intentionally NOT in the
+      // fallback list: on a non-session event (e.g. a message) `id` is a message
+      // id, not the session id, so matching it would resume the wrong session.
+      const sessionIdFields = ["session_id", "sessionId", "thread_id", "threadId"];
 
-      // Prefer session/thread events
+      // Prefer events explicitly about a session/thread. On these, a bare `id`
+      // is the session/thread id, so it is allowed here.
       if (type.includes("session") || type.includes("thread")) {
-        for (const field of idFields) {
+        for (const field of [...sessionIdFields, "id"]) {
           const value = event[field];
           if (typeof value === "string" && value.length > 0) {
             resolved = value;
@@ -93,16 +97,14 @@ export function extractSessionIdFromJsonOutput(
         }
       }
 
-      // Fallback: any object with a session ID field
+      // Fallback: any object carrying a session-specific id field (never a bare
+      // `id`), still requiring a plausibly session-id-like length.
       if (!resolved) {
-        for (const field of idFields) {
+        for (const field of sessionIdFields) {
           const value = event[field];
-          if (typeof value === "string" && value.length > 0) {
-            // Only use if it looks like a session ID (UUID-like or long alphanumeric)
-            if (value.length >= 8) {
-              resolved = value;
-              break;
-            }
+          if (typeof value === "string" && value.length >= 8) {
+            resolved = value;
+            break;
           }
         }
       }

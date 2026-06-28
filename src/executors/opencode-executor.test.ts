@@ -405,6 +405,27 @@ test("extractSessionIdFromJsonOutput handles OpenCode-style events", () => {
   assert.equal(extractSessionIdFromJsonOutput(stdout), "opencode-sess-001");
 });
 
+test("extractSessionIdFromJsonOutput does not mistake a message id for the session id", () => {
+  // No session_id anywhere; a message carries a bare `id`. That must not be
+  // picked up as the session id (it would resume the wrong session).
+  const stdout = [
+    '{"type":"message","role":"assistant","id":"msg_abcdef123456","content":"hi"}',
+    '{"type":"result","result":"done"}',
+  ].join("\n");
+  assert.equal(extractSessionIdFromJsonOutput(stdout), null);
+  assert.equal(extractSessionIdFromJsonOutput(stdout, "prior-session"), "prior-session");
+});
+
+test("extractSessionIdFromJsonOutput still extracts a bare id from a session-typed event", () => {
+  const stdout = '{"type":"session.created","id":"sess_abcdef123456"}';
+  assert.equal(extractSessionIdFromJsonOutput(stdout), "sess_abcdef123456");
+});
+
+test("extractSessionIdFromJsonOutput uses a session-specific field even on an untyped event", () => {
+  const stdout = '{"session_id":"untyped-sess-001"}';
+  assert.equal(extractSessionIdFromJsonOutput(stdout), "untyped-sess-001");
+});
+
 // ===== Assistant message extraction tests =====
 
 test("extractLastAssistantMessage extracts text from assistant event", () => {

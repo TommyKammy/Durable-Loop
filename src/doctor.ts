@@ -638,7 +638,7 @@ function isRecoveryOnlySyntheticRecord(record: IssueRunRecord): boolean {
     record.workspace.trim() === "" &&
     record.journal_path === null &&
     record.pr_number === null &&
-    record.codex_session_id === null &&
+    record.executor_session_id === null &&
     record.blocked_reason === null &&
     hasRecoveryReason &&
     hasRecoveryAt;

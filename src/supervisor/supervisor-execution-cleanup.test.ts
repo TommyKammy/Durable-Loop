@@ -34,7 +34,7 @@ test("executeCodexTurn does not consume attempts when the Codex session lock is 
     branch,
     workspace: workspacePath,
     journal_path: path.join(workspacePath, ".codex-supervisor/issue-journal.md"),
-    codex_session_id: "session-1",
+    executor_session_id: "session-1",
     attempt_count: 4,
     implementation_attempt_count: 3,
     repair_attempt_count: 1,
@@ -156,7 +156,7 @@ test("runPreparedIssue skips pre-turn persistence when the Codex session lock is
     branch,
     workspace: workspacePath,
     journal_path: journalPath,
-    codex_session_id: "session-122",
+    executor_session_id: "session-122",
     attempt_count: 4,
     implementation_attempt_count: 3,
     repair_attempt_count: 1,
@@ -288,7 +288,7 @@ test("runPreparedIssue refreshes current-head manual-review repair state before 
     workspace: workspacePath,
     journal_path: journalPath,
     pr_number: 44,
-    codex_session_id: null,
+    executor_session_id: null,
     local_review_head_sha: "head-123",
     local_review_findings_count: 3,
     local_review_root_cause_count: 1,
@@ -427,7 +427,7 @@ test("handlePostTurnMergeAndCompletion preserves same-PR manual-review repair co
     workspace: workspacePath,
     journal_path: journalPath,
     pr_number: 44,
-    codex_session_id: null,
+    executor_session_id: null,
     local_review_head_sha: "head-124",
     local_review_findings_count: 3,
     local_review_root_cause_count: 1,
@@ -509,7 +509,7 @@ test("executeCodexTurn ignores a held session lock when the agent runner cannot 
     branch,
     workspace: workspacePath,
     journal_path: journalPath,
-    codex_session_id: "session-1",
+    executor_session_id: "session-1",
   });
   const state: SupervisorStateFile = {
     activeIssueNumber: issueNumber,
@@ -1277,7 +1277,7 @@ test("runOnce clears a stale active issue reservation before selecting the next 
         workspace: path.join(fixture.workspaceRoot, `issue-${staleIssueNumber}`),
         journal_path: null,
         pr_number: null,
-        codex_session_id: "stale-session",
+        executor_session_id: "stale-session",
         blocked_reason: null,
       }),
     },
@@ -1338,7 +1338,7 @@ test("runOnce clears a stale active issue reservation before selecting the next 
   const persisted = JSON.parse(await fs.readFile(fixture.stateFile, "utf8")) as SupervisorStateFile;
   assert.equal(persisted.activeIssueNumber, nextIssueNumber);
   assert.equal(persisted.issues[String(staleIssueNumber)]?.state, "implementing");
-  assert.equal(persisted.issues[String(staleIssueNumber)]?.codex_session_id, null);
+  assert.equal(persisted.issues[String(staleIssueNumber)]?.executor_session_id, null);
   assert.equal(persisted.issues[String(nextIssueNumber)]?.branch, nextBranch);
 });
 
@@ -1357,7 +1357,7 @@ test("runOnce preserves a live active issue reservation when its issue lock is s
         workspace: path.join(fixture.workspaceRoot, `issue-${issueNumber}`),
         journal_path: null,
         pr_number: null,
-        codex_session_id: null,
+        executor_session_id: null,
         blocked_reason: null,
       }),
     },
@@ -1406,7 +1406,7 @@ test("runOnce preserves a live active issue reservation when its issue lock is s
 
   const persisted = JSON.parse(await fs.readFile(fixture.stateFile, "utf8")) as SupervisorStateFile;
   assert.equal(persisted.activeIssueNumber, issueNumber);
-  assert.equal(persisted.issues[String(issueNumber)]?.codex_session_id, null);
+  assert.equal(persisted.issues[String(issueNumber)]?.executor_session_id, null);
 });
 
 test("runOnce reserves the next runnable issue before broad merged-PR reconciliation when no issue is active", async () => {

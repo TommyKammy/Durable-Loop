@@ -173,7 +173,7 @@ test("diagnoseSupervisorHost ignores recovery-only synthetic parent epic records
           pr_number: null,
           workspace: "",
           journal_path: null,
-          codex_session_id: null,
+          executor_session_id: null,
           blocked_reason: null,
           last_recovery_reason:
             "parent_epic_auto_closed: auto-closed parent epic #123 because child issues #201, #202 are closed",
@@ -380,7 +380,7 @@ test("diagnoseSupervisorHost degrades malformed synthetic recovery records witho
             state: "done",
             pr_number: null,
             journal_path: null,
-            codex_session_id: null,
+            executor_session_id: null,
             blocked_reason: null,
             last_recovery_reason:
               "parent_epic_auto_closed: auto-closed parent epic #123 because child issues #201, #202 are closed",
@@ -488,7 +488,7 @@ test("diagnoseSupervisorHost does not skip synthetic-like records missing recove
             workspace: "",
             pr_number: null,
             journal_path: null,
-            codex_session_id: null,
+            executor_session_id: null,
             blocked_reason: null,
           }),
           last_recovery_reason: undefined,

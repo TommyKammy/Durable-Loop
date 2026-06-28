@@ -621,10 +621,10 @@ export class Supervisor {
       };
     }
 
-    const sessionLock = record.codex_session_id && this.agentRunner.capabilities.supportsResume
+    const sessionLock = record.executor_session_id && this.agentRunner.capabilities.supportsResume
       ? await acquireFileLock(
-          this.lockPath("sessions", `session-${record.codex_session_id}`),
-          `session-${record.codex_session_id}`,
+          this.lockPath("sessions", `session-${record.executor_session_id}`),
+          `session-${record.executor_session_id}`,
         )
       : null;
     if (sessionLock && !sessionLock.acquired) {

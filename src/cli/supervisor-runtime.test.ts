@@ -1097,7 +1097,7 @@ test("runSupervisorCommand renders a structured requeue result", async () => {
             previousRecordSnapshot: {
               state: "blocked",
               pr_number: null,
-              codex_session_id: "session-123",
+              executor_session_id: "session-123",
               blocked_reason: "verification",
               last_error: "verification failed",
               last_failure_kind: "command_error",
@@ -1152,7 +1152,7 @@ test("runSupervisorCommand renders a structured requeue result", async () => {
     previousRecordSnapshot: {
       state: "blocked",
       pr_number: null,
-      codex_session_id: "session-123",
+      executor_session_id: "session-123",
       blocked_reason: "verification",
       last_error: "verification failed",
       last_failure_kind: "command_error",

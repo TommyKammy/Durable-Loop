@@ -68,7 +68,7 @@ test("runOnce records timeout bookkeeping when Codex exits non-zero", async () =
       createTrackedSupervisorRecord(fixture.config, fixture.workspaceRoot, issueNumber, {
         state: "stabilizing",
         journal_path: null,
-        codex_session_id: null,
+        executor_session_id: null,
         timeout_retry_count: 0,
         blocked_reason: null,
         last_error: null,
@@ -113,7 +113,7 @@ test("runOnce records timeout bookkeeping when Codex exits non-zero", async () =
   assert.equal(record.state, "failed");
   assert.equal(record.last_failure_kind, "timeout");
   assert.equal(record.timeout_retry_count, 1);
-  assert.equal(record.codex_session_id, "thread-timeout");
+  assert.equal(record.executor_session_id, "thread-timeout");
   assert.equal(record.blocked_reason, null);
   assert.match(record.last_error ?? "", /Command timed out after 1800000ms: codex exec/);
   assert.match(record.last_failure_context?.summary ?? "", /Codex exited non-zero for issue #89/);
@@ -325,7 +325,7 @@ test("runOnce reconciles tracked PR state before reserving a new runnable issue"
       createTrackedSupervisorRecord(fixture.config, fixture.workspaceRoot, unrelatedIssueNumber, {
         state: "waiting_ci",
         pr_number: 192,
-        codex_session_id: null,
+        executor_session_id: null,
       }),
     ],
   });
@@ -506,7 +506,7 @@ test("runOnce refreshes stale waiting_ci tracked PR review state after downtime 
         state: "waiting_ci",
         pr_number: 191,
         last_head_sha: "head-191",
-        codex_session_id: "thread-366",
+        executor_session_id: "thread-366",
       }),
     ],
   });
@@ -695,7 +695,7 @@ test("runOnce reclaims a stale stabilizing issue without carrying mismatched tra
         state: "stabilizing",
         journal_path: null,
         pr_number: 527,
-        codex_session_id: "stale-session",
+        executor_session_id: "stale-session",
         implementation_attempt_count: 0,
         last_codex_summary: "Stale summary mentioning PR #527 from another issue.",
       }),
@@ -755,7 +755,7 @@ test("runOnce reclaims a stale stabilizing issue without carrying mismatched tra
   assert.equal(persisted.activeIssueNumber, issueNumber);
   assert.equal(record.state, "reproducing");
   assert.equal(record.pr_number, null);
-  assert.equal(record.codex_session_id, null);
+  assert.equal(record.executor_session_id, null);
   assert.equal(record.last_codex_summary, "Stale summary mentioning PR #527 from another issue.");
   assert.equal(resolveCalls, 2);
   assert.deepEqual(resolvedPrNumbers, [527, null]);
@@ -3482,7 +3482,7 @@ test("runOnce active Codex prompt uses current-head Codex Connector must-fix thr
     journal_path: journalPath,
     pr_number: prNumber,
     last_head_sha: headSha,
-    codex_session_id: null,
+    executor_session_id: null,
     processed_review_thread_ids: currentHeadThreads.map((thread) => `${thread.id}@${headSha}`),
     processed_review_thread_fingerprints: currentHeadThreads.map(
       (thread) => `${thread.id}@${headSha}#${thread.comments.nodes[0]?.id}`,
@@ -3775,7 +3775,7 @@ test("runOnce blocks an interrupted active turn before selecting the next runnab
           state: "implementing",
           branch: interruptedBranch,
           pr_number: null,
-          codex_session_id: "stale-session",
+          executor_session_id: "stale-session",
           blocked_reason: null,
           last_error: null,
           last_failure_context: null,
@@ -3861,7 +3861,7 @@ test("runOnce blocks an interrupted active turn before selecting the next runnab
   assert.equal(persisted.activeIssueNumber, null);
   assert.equal(persisted.issues[String(nextIssueNumber)], undefined);
   assert.equal(interruptedRecord.state, "blocked");
-  assert.equal(interruptedRecord.codex_session_id, null);
+  assert.equal(interruptedRecord.executor_session_id, null);
   assert.equal(interruptedRecord.blocked_reason, "handoff_missing");
   assert.equal(interruptedRecord.last_failure_signature, "handoff-missing");
   assert.match(
@@ -3904,7 +3904,7 @@ test("runOnce recovers interrupted active tracked PR when Codex success already 
         copilot_review_timeout_reason: "current_head_signal_wait_timed_out",
         provider_success_head_sha: null,
         provider_success_observed_at: null,
-        codex_session_id: "stale-session",
+        executor_session_id: "stale-session",
         blocked_reason: null,
         last_error: null,
         last_failure_context: null,
@@ -4024,7 +4024,7 @@ test("runOnce recovers interrupted active tracked PR when Codex success already 
   assert.equal(persisted.activeIssueNumber, null);
   assert.equal(interruptedRecord.state, "pr_open");
   assert.equal(interruptedRecord.blocked_reason, null);
-  assert.equal(interruptedRecord.codex_session_id, null);
+  assert.equal(interruptedRecord.executor_session_id, null);
   assert.equal(interruptedRecord.last_failure_context, null);
   assert.equal(interruptedRecord.last_failure_signature, null);
   assert.equal(interruptedRecord.provider_success_head_sha, currentHead);
@@ -4049,7 +4049,7 @@ test("runOnce clears a stale interrupted-turn marker when the journal changed af
         workspace: interruptedWorkspace,
         journal_path: interruptedJournalPath,
         pr_number: null,
-        codex_session_id: "stale-session",
+        executor_session_id: "stale-session",
         blocked_reason: null,
         last_error: null,
         last_failure_context: null,
@@ -4154,7 +4154,7 @@ test("runOnce clears a stale interrupted-turn marker when the journal changed af
   const interruptedRecord = persisted.issues[String(interruptedIssueNumber)]!;
   assert.equal(persisted.activeIssueNumber, interruptedIssueNumber);
   assert.equal(interruptedRecord.state, "stabilizing");
-  assert.equal(interruptedRecord.codex_session_id, null);
+  assert.equal(interruptedRecord.executor_session_id, null);
   assert.equal(interruptedRecord.blocked_reason, null);
   assert.equal(interruptedRecord.last_error, null);
   assert.match(interruptedRecord.last_recovery_reason ?? "", /durable_progress_evidence=journal_changed/);
@@ -4200,7 +4200,7 @@ test("runOnce preserves stale no-PR recovery tracking across a successful no-PR 
         workspace: path.join(fixture.workspaceRoot, `issue-${issueNumber}`),
         journal_path: null,
         pr_number: null,
-        codex_session_id: "stale-session",
+        executor_session_id: "stale-session",
         implementation_attempt_count: 2,
         last_error:
           "Issue #91 re-entered stale stabilizing recovery without a tracked PR; the supervisor will retry while the repeat count remains below 3.",
@@ -4268,7 +4268,7 @@ test("runOnce preserves stale no-PR recovery tracking across a successful no-PR 
   assert.equal(firstPersisted.activeIssueNumber, issueNumber);
   assert.equal(firstRecord.state, "stabilizing");
   assert.equal(firstRecord.pr_number, null);
-  assert.equal(firstRecord.codex_session_id, "thread-stale-no-pr");
+  assert.equal(firstRecord.executor_session_id, "thread-stale-no-pr");
   assert.equal(firstRecord.repeated_failure_signature_count, 0);
   assert.equal(firstRecord.stale_stabilizing_no_pr_recovery_count, 2);
 
@@ -4283,7 +4283,7 @@ test("runOnce preserves stale no-PR recovery tracking across a successful no-PR 
   assert.equal(secondPersisted.activeIssueNumber, null);
   assert.equal(secondRecord.state, "blocked");
   assert.equal(secondRecord.pr_number, null);
-  assert.equal(secondRecord.codex_session_id, null);
+  assert.equal(secondRecord.executor_session_id, null);
   assert.equal(secondRecord.blocked_reason, "manual_review");
   assert.match(secondRecord.last_error ?? "", /manual intervention is required/i);
   assert.match(
@@ -4328,7 +4328,7 @@ test("runOnce dry-run resumes stale no-PR recovery into draft PR publication for
         workspace,
         journal_path: path.join(workspace, ".codex-supervisor", "issue-journal.md"),
         pr_number: null,
-        codex_session_id: "stale-session",
+        executor_session_id: "stale-session",
         implementation_attempt_count: 2,
         last_error:
           "Issue #91 re-entered stale stabilizing recovery without a tracked PR; the supervisor will retry while the repeat count remains below 3.",
@@ -4403,7 +4403,7 @@ test("runOnce dry-run resumes stale no-PR recovery into draft PR publication for
   assert.equal(persisted.activeIssueNumber, issueNumber);
   assert.equal(record.state, "draft_pr");
   assert.equal(record.pr_number, null);
-  assert.equal(record.codex_session_id, null);
+  assert.equal(record.executor_session_id, null);
 });
 
 test("runOnce lets queued stale no-PR recovery use its own retry budget after implementation attempts are exhausted", async () => {
@@ -4446,7 +4446,7 @@ test("runOnce lets queued stale no-PR recovery use its own retry budget after im
         workspace: path.join(fixture.workspaceRoot, `issue-${issueNumber}`),
         journal_path: null,
         pr_number: null,
-        codex_session_id: "stale-session",
+        executor_session_id: "stale-session",
         attempt_count: 2,
         implementation_attempt_count: 2,
         last_error:
@@ -4516,7 +4516,7 @@ test("runOnce lets queued stale no-PR recovery use its own retry budget after im
   assert.equal(firstPersisted.activeIssueNumber, issueNumber);
   assert.equal(firstRecord.state, "stabilizing");
   assert.equal(firstRecord.pr_number, null);
-  assert.equal(firstRecord.codex_session_id, "thread-stale-no-pr-budget");
+  assert.equal(firstRecord.executor_session_id, "thread-stale-no-pr-budget");
   assert.equal(firstRecord.stale_stabilizing_no_pr_recovery_count, 2);
   assert.equal(firstRecord.implementation_attempt_count, 3);
   assert.doesNotMatch(firstRecord.last_error ?? "", /Reached max implementation Codex attempts/);
@@ -4580,7 +4580,7 @@ test("runOnce converges a stale no-PR issue to done when only supervisor-owned w
         workspace,
         journal_path: journalPath,
         pr_number: null,
-        codex_session_id: "stale-session",
+        executor_session_id: "stale-session",
         implementation_attempt_count: 2,
         last_error:
           "Issue #92 re-entered stale stabilizing recovery without a tracked PR; the supervisor will retry while the repeat count remains below 3.",
@@ -4649,7 +4649,7 @@ test("runOnce converges a stale no-PR issue to done when only supervisor-owned w
   assert.equal(persisted.activeIssueNumber, null);
   assert.equal(record.state, "blocked");
   assert.equal(record.pr_number, null);
-  assert.equal(record.codex_session_id, null);
+  assert.equal(record.executor_session_id, null);
   assert.equal(record.blocked_reason, "manual_review");
   assert.match(record.last_error ?? "", /preserved branch no longer differs from origin\/main/);
   assert.deepEqual(record.last_failure_context?.details ?? [], [
@@ -4688,14 +4688,14 @@ test("runOnce converges an active merged issue before unrelated tracked-PR recon
         state: "waiting_ci",
         branch: unrelatedBranch,
         pr_number: 192,
-        codex_session_id: null,
+        executor_session_id: null,
       }),
       [String(activeIssueNumber)]: createRecord({
         issue_number: activeIssueNumber,
         state: "merging",
         branch: activeBranch,
         pr_number: 191,
-        codex_session_id: "thread-merged-active",
+        executor_session_id: "thread-merged-active",
         blocked_reason: null,
       }),
     },
@@ -4810,14 +4810,14 @@ test("runOnce converges an active merged waiting_ci issue before unrelated track
         state: "waiting_ci",
         branch: unrelatedBranch,
         pr_number: 191,
-        codex_session_id: null,
+        executor_session_id: null,
       }),
       [String(activeIssueNumber)]: createRecord({
         issue_number: activeIssueNumber,
         state: "waiting_ci",
         branch: activeBranch,
         pr_number: 192,
-        codex_session_id: "thread-merged-active",
+        executor_session_id: "thread-merged-active",
         blocked_reason: null,
       }),
     },

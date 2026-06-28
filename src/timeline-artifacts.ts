@@ -460,7 +460,7 @@ export function buildIssueRunTimelineExport(args: {
     });
   }
 
-  if (record.codex_session_id !== null || record.last_codex_summary !== null) {
+  if (record.executor_session_id !== null || record.last_codex_summary !== null) {
     setEvent({
       issue_number: record.issue_number,
       pr_number: record.pr_number,

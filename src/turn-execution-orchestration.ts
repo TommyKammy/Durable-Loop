@@ -253,14 +253,14 @@ export function selectReviewThreadsForTurn(args: {
 }
 
 export function shouldResumeAgentTurn(args: {
-  record: Pick<IssueRunRecord, "codex_session_id" | "state">;
+  record: Pick<IssueRunRecord, "executor_session_id" | "state">;
   agentRunnerCapabilities?: Pick<AgentRunnerCapabilities, "supportsResume">;
 }): args is {
-  record: Pick<IssueRunRecord, "codex_session_id" | "state"> & { codex_session_id: string };
+  record: Pick<IssueRunRecord, "executor_session_id" | "state"> & { executor_session_id: string };
   agentRunnerCapabilities?: Pick<AgentRunnerCapabilities, "supportsResume">;
 } {
   const canResume = args.agentRunnerCapabilities?.supportsResume ?? true;
-  return Boolean(args.record.codex_session_id) && canResume && shouldUseCompactResumePrompt(args.record.state);
+  return Boolean(args.record.executor_session_id) && canResume && shouldUseCompactResumePrompt(args.record.state);
 }
 
 export async function prepareCodexTurnPrompt(args: {
@@ -394,7 +394,7 @@ export async function prepareCodexTurnPrompt(args: {
       ? {
           ...commonTurnContext,
           kind: "resume" as const,
-          sessionId: record.codex_session_id!,
+          sessionId: record.executor_session_id!,
         }
       : {
           ...commonTurnContext,

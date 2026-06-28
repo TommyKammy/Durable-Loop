@@ -115,7 +115,7 @@ test("reconcileRecoverableBlockedIssueStates requeues open no-PR handoff-missing
   assert.equal(updated.state, "queued");
   assert.equal(updated.blocked_reason, null);
   assert.equal(updated.last_error, null);
-  assert.equal(updated.codex_session_id, null);
+  assert.equal(updated.executor_session_id, null);
   assert.equal(updated.last_failure_signature, "handoff-missing");
   assert.equal(
     updated.last_failure_context?.summary ?? null,
@@ -401,7 +401,7 @@ test("reconcileRecoverableBlockedIssueStates resumes conflicted tracked PR hando
         last_failure_signature: "handoff-missing",
         repeated_failure_signature_count: 2,
         repair_attempt_count: 2,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
       }),
     ],
   });
@@ -462,7 +462,7 @@ test("reconcileRecoverableBlockedIssueStates resumes conflicted tracked PR hando
   assert.equal(updated.last_failure_context, null);
   assert.equal(updated.last_failure_signature, null);
   assert.equal(updated.repeated_failure_signature_count, 0);
-  assert.equal(updated.codex_session_id, null);
+  assert.equal(updated.executor_session_id, null);
   assert.equal(updated.pr_number, 191);
   assert.equal(updated.last_head_sha, "head-191");
   assert.equal(
@@ -619,7 +619,7 @@ test("reconcileRecoverableBlockedIssueStates clears stale tracked-PR review stat
         },
         last_failure_signature: "handoff-missing",
         repeated_failure_signature_count: 2,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
       }),
     ],
   });
@@ -677,7 +677,7 @@ test("reconcileRecoverableBlockedIssueStates clears stale tracked-PR review stat
   assert.equal(updated.last_failure_signature, null);
   assert.equal(updated.repeated_failure_signature_count, 0);
   assert.equal(updated.repair_attempt_count, 0);
-  assert.equal(updated.codex_session_id, null);
+  assert.equal(updated.executor_session_id, null);
   assert.equal(updated.pr_number, 191);
   assert.equal(updated.last_head_sha, "head-new-191");
   assert.equal(updated.local_review_head_sha, null);
@@ -739,7 +739,7 @@ test("reconcileRecoverableBlockedIssueStates recovers tracked handoff-missing af
         },
         last_failure_signature: "handoff-missing",
         repeated_failure_signature_count: 2,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
       }),
     ],
   });
@@ -797,7 +797,7 @@ test("reconcileRecoverableBlockedIssueStates recovers tracked handoff-missing af
   assert.equal(updated.last_failure_context, null);
   assert.equal(updated.last_failure_signature, null);
   assert.equal(updated.repeated_failure_signature_count, 0);
-  assert.equal(updated.codex_session_id, null);
+  assert.equal(updated.executor_session_id, null);
   assert.equal(updated.last_head_sha, TRACKED_PR_NEW_HEAD);
   assert.equal(updated.local_review_head_sha, null);
   assert.deepEqual(updated.processed_review_thread_ids, []);
@@ -827,7 +827,7 @@ test("reconcileRecoverableBlockedIssueStates keeps tracked handoff-missing block
     },
     last_failure_signature: "handoff-missing",
     repeated_failure_signature_count: 2,
-    codex_session_id: "session-366",
+    executor_session_id: "session-366",
   });
   const state: SupervisorStateFile = createSupervisorState({
     issues: [original],
@@ -920,7 +920,7 @@ test("reconcileRecoverableBlockedIssueStates recovers same-head tracked handoff-
       },
       last_failure_signature: "handoff-missing",
       repeated_failure_signature_count: 1,
-      codex_session_id: "session-366",
+      executor_session_id: "session-366",
     });
     const state: SupervisorStateFile = createSupervisorState({
       issues: [original],
@@ -983,7 +983,7 @@ test("reconcileRecoverableBlockedIssueStates recovers same-head tracked handoff-
     assert.equal(updated.last_failure_context, null);
     assert.equal(updated.last_failure_signature, null);
     assert.equal(updated.repeated_failure_signature_count, 0);
-    assert.equal(updated.codex_session_id, null);
+    assert.equal(updated.executor_session_id, null);
     assert.equal(updated.pr_number, TRACKED_PR_NUMBER);
     assert.equal(updated.last_head_sha, currentHead);
     assert.equal(updated.copilot_review_timeout_action, "request_review_comment");
@@ -1022,7 +1022,7 @@ test("reconcileRecoverableBlockedIssueStates recovers same-head handoff-missing 
       codex_connector_review_requested_head_sha: null,
       last_failure_signature: "handoff-missing",
       repeated_failure_signature_count: 1,
-      codex_session_id: "session-366",
+      executor_session_id: "session-366",
     });
     const state: SupervisorStateFile = createSupervisorState({
       issues: [original],
@@ -1101,7 +1101,7 @@ test("reconcileRecoverableBlockedIssueStates recovers same-head handoff-missing 
     assert.equal(updated.state, "waiting_ci");
     assert.equal(updated.blocked_reason, null);
     assert.equal(updated.last_failure_signature, null);
-    assert.equal(updated.codex_session_id, null);
+    assert.equal(updated.executor_session_id, null);
     assert.equal(updated.copilot_review_timeout_action, "request_review_comment");
     assert.equal(saveCalls, 1);
     assert.deepEqual(recoveryEvents.map((event) => event.reason), [
@@ -1134,7 +1134,7 @@ test("reconcileRecoverableBlockedIssueStates records provider success for same-h
     provider_success_observed_at: null,
     last_failure_signature: "handoff-missing",
     repeated_failure_signature_count: 1,
-    codex_session_id: "session-366",
+    executor_session_id: "session-366",
   });
   const state: SupervisorStateFile = createSupervisorState({
     issues: [original],
@@ -1243,7 +1243,7 @@ test("reconcileRecoverableBlockedIssueStates records provider success for same-h
   assert.equal(updated.last_failure_context, null);
   assert.equal(updated.last_failure_signature, null);
   assert.equal(updated.repeated_failure_signature_count, 0);
-  assert.equal(updated.codex_session_id, null);
+  assert.equal(updated.executor_session_id, null);
   assert.equal(updated.provider_success_head_sha, currentHead);
   assert.ok(updated.provider_success_observed_at);
   assert.equal(updated.last_tracked_pr_progress_summary, "handoff_missing_recovered=same_head_projected_state=pr_open");
@@ -1272,7 +1272,7 @@ test("reconcileRecoverableBlockedIssueStates keeps same-head handoff-missing blo
     provider_success_observed_at: null,
     last_failure_signature: "handoff-missing",
     repeated_failure_signature_count: 1,
-    codex_session_id: "session-366",
+    executor_session_id: "session-366",
   });
   const state: SupervisorStateFile = createSupervisorState({
     issues: [original],
@@ -1380,7 +1380,7 @@ test("reconcileRecoverableBlockedIssueStates does not force same-head outdated r
     copilot_review_timeout_reason: null,
     last_failure_signature: "handoff-missing",
     repeated_failure_signature_count: 1,
-    codex_session_id: "session-366",
+    executor_session_id: "session-366",
   });
   const state: SupervisorStateFile = createSupervisorState({
     issues: [original],
@@ -1561,7 +1561,7 @@ test("reconcileRecoverableBlockedIssueStates keeps same-head handoff-missing blo
         codex_connector_review_requested_head_sha: null,
         last_failure_signature: "handoff-missing",
         repeated_failure_signature_count: 1,
-        codex_session_id: "session-366",
+        executor_session_id: "session-366",
       });
       const state: SupervisorStateFile = createSupervisorState({
         issues: [original],
@@ -1630,7 +1630,7 @@ test("reconcileRecoverableBlockedIssueStates does not recover same-head handoff-
     copilot_review_timeout_reason: null,
     last_failure_signature: "handoff-missing",
     repeated_failure_signature_count: 1,
-    codex_session_id: "session-366",
+    executor_session_id: "session-366",
   });
   const state: SupervisorStateFile = createSupervisorState({
     issues: [original],
@@ -1891,7 +1891,7 @@ test("reconcileRecoverableBlockedIssueStates requeues additional no-PR blocked v
         state: "blocked",
         blocked_reason: "verification",
         pr_number: null,
-        codex_session_id: null,
+        executor_session_id: null,
         last_error: "Verification failed against a stale issue definition.",
         last_failure_kind: "command_error",
         last_failure_context: {
@@ -1993,7 +1993,7 @@ test("reconcileRecoverableBlockedIssueStates ignores cosmetic-only issue edits f
         state: "blocked",
         blocked_reason: "verification",
         pr_number: null,
-        codex_session_id: null,
+        executor_session_id: null,
         last_error: "Verification failed against a stale issue definition.",
         last_failure_kind: "command_error",
         last_failure_context: {

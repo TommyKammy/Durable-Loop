@@ -229,7 +229,7 @@ test("status surfaces parent epic auto-closure as the latest recovery on read-on
         workspace: "",
         journal_path: null,
         pr_number: null,
-        codex_session_id: null,
+        executor_session_id: null,
         blocked_reason: null,
         last_recovery_reason:
           "parent_epic_auto_closed: auto-closed parent epic #199 because child issues #201, #202 are closed",

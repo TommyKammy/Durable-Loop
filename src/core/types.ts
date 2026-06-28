@@ -265,7 +265,7 @@ export interface IssueRunRecord {
   copilot_review_timed_out_at: string | null;
   copilot_review_timeout_action: CopilotReviewTimeoutAction | null;
   copilot_review_timeout_reason: string | null;
-  codex_session_id: string | null;
+  executor_session_id: string | null;
   local_review_head_sha: string | null;
   local_review_blocker_summary: string | null;
   local_review_summary_path: string | null;

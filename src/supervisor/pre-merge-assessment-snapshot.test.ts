@@ -119,7 +119,7 @@ function createRecord(summaryPath: string): IssueRunRecord {
     copilot_review_timed_out_at: null,
     copilot_review_timeout_action: null,
     copilot_review_timeout_reason: null,
-    codex_session_id: null,
+    executor_session_id: null,
     local_review_head_sha: "head-916",
     local_review_blocker_summary: "high src/gate.ts:44 contract still blocks merge",
     local_review_summary_path: summaryPath,

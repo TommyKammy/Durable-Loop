@@ -743,7 +743,7 @@ function shouldAnnotateJournalRehydration(
     | "implementation_attempt_count"
     | "repair_attempt_count"
     | "pr_number"
-    | "codex_session_id"
+    | "executor_session_id"
     | "last_codex_summary"
     | "last_error"
     | "last_failure_context"
@@ -755,7 +755,7 @@ function shouldAnnotateJournalRehydration(
     record.implementation_attempt_count > 1 ||
     record.repair_attempt_count > 1 ||
     record.pr_number !== null ||
-    record.codex_session_id !== null ||
+    record.executor_session_id !== null ||
     record.last_codex_summary !== null ||
     record.last_error !== null ||
     record.last_failure_context !== null ||

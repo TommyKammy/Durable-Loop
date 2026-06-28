@@ -92,7 +92,7 @@ test("runOnce routes supervisor turn execution through an injected agent runner"
 
   const persisted = JSON.parse(await fs.readFile(fixture.stateFile, "utf8")) as SupervisorStateFile;
   const record = persisted.issues[String(issueNumber)];
-  assert.equal(record.codex_session_id, "session-agent-runner");
+  assert.equal(record.executor_session_id, "session-agent-runner");
   assert.equal(record.last_failure_kind, null);
   assert.match(record.last_codex_summary ?? "", /completed via injected agent runner/);
 });

@@ -171,7 +171,7 @@ export async function recoverUnexpectedCodexTurnFailure(args: {
       `workspace_head=${workspaceStatus?.headSha ?? record.last_head_sha ?? "unknown"}`,
       `pr_number=${pr?.number ?? "none"}`,
       `pr_head=${pr?.headRefOid ?? "none"}`,
-      `codex_session_id=${record.codex_session_id ?? "none"}`,
+      `executor_session_id=${record.executor_session_id ?? "none"}`,
       truncatePreservingStartAndEnd(message, 2000) ?? "Unknown failure",
     ],
   );

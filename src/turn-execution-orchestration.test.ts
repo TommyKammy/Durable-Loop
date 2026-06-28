@@ -2094,7 +2094,7 @@ test("shouldResumeAgentTurn rejects persisted sessions for non-compact resume st
   assert.equal(
     shouldResumeAgentTurn({
       record: {
-        codex_session_id: "session-existing",
+        executor_session_id: "session-existing",
         state: "addressing_review",
       },
       agentRunnerCapabilities: {
@@ -2106,7 +2106,7 @@ test("shouldResumeAgentTurn rejects persisted sessions for non-compact resume st
   assert.equal(
     shouldResumeAgentTurn({
       record: {
-        codex_session_id: "session-existing",
+        executor_session_id: "session-existing",
         state: "implementing",
       },
       agentRunnerCapabilities: {
@@ -2268,7 +2268,7 @@ test("prepareCodexTurnPrompt falls back to the full start prompt when the runner
     issues: {
       "102": createRecord({
         state: "reproducing",
-        codex_session_id: "session-stale",
+        executor_session_id: "session-stale",
       }),
     },
   };
@@ -2331,7 +2331,7 @@ test("prepareCodexTurnPrompt computes change classes for start prompts", async (
     issues: {
       "102": createRecord({
         state: "implementing",
-        codex_session_id: null,
+        executor_session_id: null,
       }),
     },
   };

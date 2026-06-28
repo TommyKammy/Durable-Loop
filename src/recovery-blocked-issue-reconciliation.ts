@@ -291,7 +291,7 @@ export async function reconcileRecoverableBlockedIssueStatesInModule(
         last_error: null,
         last_failure_kind: null,
         last_blocker_signature: null,
-        codex_session_id: null,
+        executor_session_id: null,
         review_wait_started_at: null,
         review_wait_head_sha: null,
         copilot_review_requested_observed_at: null,
@@ -322,7 +322,7 @@ export async function reconcileRecoverableBlockedIssueStatesInModule(
         last_failure_signature: null,
         repeated_failure_signature_count: 0,
         stale_stabilizing_no_pr_recovery_count: 0,
-        codex_session_id: null,
+        executor_session_id: null,
         ...applyRecoveryEvent({}, recoveryEvent),
       });
       state.issues[String(record.issue_number)] = updated;
@@ -346,7 +346,7 @@ export async function reconcileRecoverableBlockedIssueStatesInModule(
         last_failure_signature: null,
         repeated_failure_signature_count: 0,
         stale_stabilizing_no_pr_recovery_count: 0,
-        codex_session_id: null,
+        executor_session_id: null,
         ...issueDefinitionFreshnessPatch(issue),
         ...applyRecoveryEvent({}, recoveryEvent),
       });
@@ -388,7 +388,7 @@ export async function reconcileRecoverableBlockedIssueStatesInModule(
           last_blocker_signature: null,
           pr_number: trackedPullRequest.number,
           last_head_sha: trackedPullRequest.headRefOid,
-          codex_session_id: null,
+          executor_session_id: null,
           ...headAdvanceResetPatch,
         }, recoveryEvent));
         state.issues[String(record.issue_number)] = updated;
@@ -429,7 +429,7 @@ export async function reconcileRecoverableBlockedIssueStatesInModule(
           repair_attempt_count: 0,
           timeout_retry_count: 0,
           blocked_verification_retry_count: 0,
-          codex_session_id: null,
+          executor_session_id: null,
           pr_number: trackedPullRequest.number,
           last_head_sha: trackedPullRequest.headRefOid,
           ...headAdvanceResetPatch,
@@ -535,7 +535,7 @@ export async function reconcileRecoverableBlockedIssueStatesInModule(
         copilotReviewTimeoutPatch: projection.copilotReviewTimeoutPatch,
         mergeLatencyVisibilityPatch: projection.mergeLatencyVisibilityPatch,
       });
-      patch.codex_session_id = null;
+      patch.executor_session_id = null;
       patch.last_tracked_pr_progress_summary = externalProgressEvidence
         ? `handoff_missing_recovered=evidence=${externalProgressEvidence}`
         : `handoff_missing_recovered=same_head_projected_state=${nextState}`;

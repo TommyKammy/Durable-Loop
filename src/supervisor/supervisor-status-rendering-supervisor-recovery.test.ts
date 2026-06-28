@@ -117,7 +117,7 @@ function createRecord(overrides: Partial<IssueRunRecord> = {}): IssueRunRecord {
     copilot_review_timed_out_at: null,
     copilot_review_timeout_action: null,
     copilot_review_timeout_reason: null,
-    codex_session_id: "session-1",
+    executor_session_id: "session-1",
     local_review_head_sha: null,
     local_review_blocker_summary: null,
     local_review_summary_path: null,
@@ -227,7 +227,7 @@ test("formatDetailedStatus surfaces the latest recovery reason separately from t
     last_failure_kind: null,
     last_failure_context: null,
     last_failure_signature: null,
-    codex_session_id: null,
+    executor_session_id: null,
   });
   const latestRecoveryRecord = createRecord({
     issue_number: 91,
@@ -239,7 +239,7 @@ test("formatDetailedStatus surfaces the latest recovery reason separately from t
     last_failure_kind: null,
     last_failure_context: null,
     last_failure_signature: null,
-    codex_session_id: null,
+    executor_session_id: null,
     updated_at: "2026-03-13T00:20:00Z",
     last_codex_summary: null,
     last_recovery_reason: "merged_pr_convergence: tracked PR #191 merged; marked issue #91 done",

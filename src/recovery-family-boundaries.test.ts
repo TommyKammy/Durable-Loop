@@ -58,7 +58,7 @@ test("active recovery boundary clears a stale active reservation without loading
     issue_number: 366,
     state: "implementing",
     workspace: tempDir,
-    codex_session_id: null,
+    executor_session_id: null,
   });
   const state = createSupervisorState({
     activeIssueNumber: 366,
@@ -101,7 +101,7 @@ test("active stabilizing recovery resolves tracked PRs with action-grade hydrati
     branch: "codex/issue-367",
     pr_number: 467,
     workspace: tempDir,
-    codex_session_id: null,
+    executor_session_id: null,
   });
   const state = createSupervisorState({
     activeIssueNumber: 367,

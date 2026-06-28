@@ -31,7 +31,7 @@ import type {
 } from "../core/types";
 import { resolveExecutorTurnTimeoutMinutes } from "../core/config-types";
 import {
-  buildExecutorPermissionSafetyArgs,
+  buildClaudeCodePermissionArgs,
   createExecutorAgentRunner,
   runExecutorCliCommand,
   type ExecutorTurnResult,
@@ -95,9 +95,10 @@ export function buildClaudeCodeArgs(
     args.push("--resume", sessionId);
   }
 
-  // Permissions posture: gated on executionSafetyMode (operator_gated keeps the
-  // CLI's own approval prompts) rather than hardcoded autonomous.
-  args.push(...buildExecutorPermissionSafetyArgs(config, "--dangerously-skip-permissions"));
+  // Permissions posture: gated on executionSafetyMode. operator_gated forces an
+  // explicit non-bypass --permission-mode (overrides ambient settings); autonomous
+  // bypasses prompts.
+  args.push(...buildClaudeCodePermissionArgs(config));
 
   // Workspace directory access
   args.push("--add-dir", workspacePath);

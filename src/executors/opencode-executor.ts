@@ -32,7 +32,7 @@ import type {
 } from "../core/types";
 import { resolveExecutorTurnTimeoutMinutes } from "../core/config-types";
 import {
-  buildExecutorPermissionSafetyArgs,
+  buildOpenCodePermissionArgs,
   createExecutorAgentRunner,
   runExecutorCliCommand,
   type ExecutorTurnResult,
@@ -95,9 +95,9 @@ export function buildOpenCodeArgs(
     args.push("--session", sessionId);
   }
 
-  // Permissions posture: gated on executionSafetyMode (operator_gated keeps the
-  // CLI's own approval prompts) rather than hardcoded autonomous.
-  args.push(...buildExecutorPermissionSafetyArgs(config, "--dangerously-skip-permissions"));
+  // Permissions posture: gated on executionSafetyMode. operator_gated fails
+  // closed for OpenCode (no verified CLI ask/deny flag); autonomous skips prompts.
+  args.push(...buildOpenCodePermissionArgs(config));
 
   // Workspace directory
   args.push("--dir", workspacePath);

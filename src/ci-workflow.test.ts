@@ -252,6 +252,15 @@ jobs:
   );
 });
 
+test("CI workflow exercises the node:sqlite state-store suite on a dedicated Node 22 job", async () => {
+  const raw = await fs.readFile(workflowPath, "utf8");
+
+  assert.match(raw, /^ {2}sqlite-state-store:/mu, "expected a dedicated sqlite-state-store job");
+  assert.match(raw, /npm run test:sqlite-state-store/u, "the job must run the sqlite state-store script");
+  // node:sqlite is only available on Node >= 22.
+  assert.match(raw, /node-version:\s*22/u);
+});
+
 test("CI workflow cancels stale runs for the same branch or PR", async () => {
   const workflow = parseWorkflow(await fs.readFile(workflowPath, "utf8"));
 

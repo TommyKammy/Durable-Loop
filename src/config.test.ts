@@ -311,6 +311,14 @@ test("loadConfig accepts executorBinary as a backward-compatible alias for execu
   );
   assert.equal(overridePlaceholder.executorBinary, "opencode");
 
+  // A legacy codexBinary must NOT mask a canonical executorBinary that is still a
+  // starter placeholder — the canonical key is authoritative and stays invalid.
+  const maskedPlaceholderPath = await writeConfig("masked-placeholder.json", {
+    executorBinary: "/absolute/path/to/codex",
+    codexBinary: "opencode",
+  });
+  assert.throws(() => loadConfig(maskedPlaceholderPath), /executorBinary|placeholder/i);
+
   // Neither present fails closed, naming both keys.
   const missingPath = await writeConfig("missing.json", {});
   assert.throws(() => loadConfig(missingPath), /executorBinary \(or codexBinary\)/);

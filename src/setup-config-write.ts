@@ -377,6 +377,18 @@ function applySetupChanges(document: Record<string, unknown>, changes: SetupConf
   assertNoConflictingLocalCiIntent(changes);
 
   const nextDocument = { ...document };
+  // Canonicalize the legacy binary alias on every write so existing configs
+  // migrate even when the operator edits an unrelated field, and the stale
+  // codexBinary key never survives in the saved document. The legacy value is
+  // adopted only when the canonical key is absent/empty (a present executorBinary,
+  // even a placeholder, stays authoritative — matching normalizeConfigDocument).
+  if ("codexBinary" in nextDocument) {
+    const canonical = nextDocument.executorBinary;
+    if (!(typeof canonical === "string" && canonical.trim() !== "")) {
+      nextDocument.executorBinary = nextDocument.codexBinary;
+    }
+    delete nextDocument.codexBinary;
+  }
   if (changes.repoPath !== undefined) {
     nextDocument.repoPath = changes.repoPath;
   }

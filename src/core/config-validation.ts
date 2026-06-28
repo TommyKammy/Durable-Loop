@@ -37,22 +37,19 @@ function hasNonEmptyString(value: unknown): boolean {
  * `executorBinary` field so that every raw-document consumer (placeholder scan,
  * required-field check, setup fields, parser) deals only with `executorBinary`.
  *
- * `executorBinary` is the canonical key, so a usable one (non-empty and not a
- * starter placeholder) wins even when a legacy `codexBinary` is also present.
- * When `executorBinary` is not usable but a legacy `codexBinary` carries a
- * value, that value is adopted (covering both real legacy configs and a leftover
- * placeholder, which downstream scans still flag). The legacy key is always
- * removed after collapsing, so only the canonical key is written back.
+ * `executorBinary` is the canonical, authoritative key: the legacy `codexBinary`
+ * value is adopted ONLY when the canonical key is absent or empty. A present
+ * `executorBinary` — even a starter placeholder — is kept as-is so the
+ * downstream placeholder scan can still flag it; the legacy alias must never
+ * mask a canonical placeholder. The legacy key is always removed after
+ * collapsing, so only the canonical key is written back.
  */
 export function normalizeConfigDocument(raw: Record<string, unknown>): Record<string, unknown> {
   if (!("codexBinary" in raw)) {
     return raw;
   }
   const normalized = { ...raw };
-  const executorBinaryUsable =
-    hasNonEmptyString(normalized.executorBinary) &&
-    !isStarterProfilePlaceholder("executorBinary", normalized.executorBinary);
-  if (!executorBinaryUsable && hasNonEmptyString(normalized.codexBinary)) {
+  if (!hasNonEmptyString(normalized.executorBinary) && hasNonEmptyString(normalized.codexBinary)) {
     normalized.executorBinary = normalized.codexBinary;
   }
   delete normalized.codexBinary;

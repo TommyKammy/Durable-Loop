@@ -107,7 +107,7 @@ function buildInitConfig(detection: InitDetection): Record<string, unknown> {
     workspaceRoot: "./.local/worktrees",
     stateBackend: "json",
     stateFile: "./.local/state.json",
-    codexBinary: "codex",
+    executorBinary: "codex",
     trustMode: "untrusted_or_mixed",
     executionSafetyMode: "operator_gated",
     reviewBotLogins: [],

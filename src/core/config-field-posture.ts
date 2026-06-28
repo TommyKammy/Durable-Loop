@@ -44,7 +44,7 @@ const CONFIG_FIELD_POSTURE_METADATA_ENTRIES = [
   required("defaultBranch", "Managed repository default branch."),
   required("workspaceRoot", "Per-issue worktree root."),
   required("stateFile", "Durable supervisor state file."),
-  required("codexBinary", "Codex CLI executable."),
+  required("executorBinary", "Codex CLI executable."),
   required("branchPrefix", "Managed issue branch prefix."),
   required("trustMode", "Explicit first-run trust posture decision.", "first_run_setup"),
   required("executionSafetyMode", "Explicit first-run execution safety decision.", "first_run_setup"),

@@ -63,7 +63,7 @@ test("runOnce routes supervisor turn execution through an injected agent runner"
   const supervisor = new Supervisor(
     createConfig({
       ...fixture.config,
-      codexBinary: path.join(path.dirname(fixture.stateFile), "missing-codex"),
+      executorBinary: path.join(path.dirname(fixture.stateFile), "missing-codex"),
     }),
     { agentRunner },
   );

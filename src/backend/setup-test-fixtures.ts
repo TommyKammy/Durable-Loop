@@ -30,7 +30,7 @@ const DEFAULT_SETUP_DOCUMENT = {
   defaultBranch: "main",
   workspaceRoot: "/tmp/worktrees",
   stateFile: "/tmp/state.json",
-  codexBinary: "codex",
+  executorBinary: "codex",
   branchPrefix: "codex/issue-",
   reviewBotLogins: ["chatgpt-codex-connector"],
   experimentalFlag: true,
@@ -158,7 +158,7 @@ const DEFAULT_SETUP_FIELD_FIXTURES: Record<SetupReadinessFieldKey, Omit<SetupRea
       valueType: "file_path",
     },
   },
-  codexBinary: {
+  executorBinary: {
     label: "Codex binary",
     state: "configured",
     value: "codex",

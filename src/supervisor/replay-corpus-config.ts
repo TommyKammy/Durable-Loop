@@ -19,7 +19,7 @@ export function createCheckedInReplayCorpusConfig(repoRoot: string): SupervisorC
     workspaceRoot: path.join(replayStateRoot, "workspaces"),
     stateBackend: "json",
     stateFile: path.join(replayStateRoot, "state.json"),
-    codexBinary: "codex",
+    executorBinary: "codex",
     codexModelStrategy: "inherit",
     codexReasoningEffortByState: {},
     codexReasoningEscalateOnRepeatedFailure: true,

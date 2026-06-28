@@ -20,7 +20,7 @@ export interface SetupConfigChanges {
   defaultBranch?: string;
   workspaceRoot?: string;
   stateFile?: string;
-  codexBinary?: string;
+  executorBinary?: string;
   branchPrefix?: string;
   workspacePreparationCommand?: string | null;
   localCiCommand?: string | null;
@@ -87,7 +87,7 @@ const CONFIGURABLE_FIELDS: SetupConfigWritableFieldKey[] = [
   "defaultBranch",
   "workspaceRoot",
   "stateFile",
-  "codexBinary",
+  "executorBinary",
   "branchPrefix",
   "workspacePreparationCommand",
   "localCiCommand",
@@ -106,6 +106,12 @@ export const DANGEROUS_SETUP_CONFIG_FIELD_KEYS = [
 ] as const satisfies readonly DangerousSetupConfigFieldKey[];
 const DANGEROUS_CONFIGURABLE_FIELDS: DangerousSetupConfigFieldKey[] = [...DANGEROUS_SETUP_CONFIG_FIELD_KEYS];
 const ALL_CONFIGURABLE_FIELDS = [...CONFIGURABLE_FIELDS, ...DANGEROUS_CONFIGURABLE_FIELDS] as const;
+
+// Read-only legacy input aliases accepted by the setup writer but never written
+// back: they are canonicalized to their replacement key during normalization
+// (codexBinary -> executorBinary). Listed here so the unknown-field guard does
+// not reject legacy setup clients that have not migrated yet.
+const LEGACY_SETUP_INPUT_ALIASES = new Set<string>(["codexBinary"]);
 
 const RESTART_REQUIRED_FIELDS = new Set<string>(ALL_CONFIGURABLE_FIELDS);
 
@@ -250,7 +256,11 @@ function normalizeSetupChanges(changes: unknown): SetupConfigChanges {
   }
 
   const raw = changes as Record<string, unknown>;
-  const unknownFields = Object.keys(raw).filter((key) => !ALL_CONFIGURABLE_FIELDS.includes(key as (typeof ALL_CONFIGURABLE_FIELDS)[number]));
+  const unknownFields = Object.keys(raw).filter(
+    (key) =>
+      !ALL_CONFIGURABLE_FIELDS.includes(key as (typeof ALL_CONFIGURABLE_FIELDS)[number]) &&
+      !LEGACY_SETUP_INPUT_ALIASES.has(key),
+  );
   if (unknownFields.length > 0) {
     throw new Error(`Unsupported setup config field: ${unknownFields[0]}`);
   }
@@ -271,8 +281,11 @@ function normalizeSetupChanges(changes: unknown): SetupConfigChanges {
   if ("stateFile" in raw) {
     normalized.stateFile = assertNonEmptyString(raw.stateFile, "stateFile");
   }
-  if ("codexBinary" in raw) {
-    normalized.codexBinary = assertNonEmptyString(raw.codexBinary, "codexBinary");
+  if ("executorBinary" in raw) {
+    normalized.executorBinary = assertNonEmptyString(raw.executorBinary, "executorBinary");
+  } else if ("codexBinary" in raw) {
+    // Legacy input alias: accept codexBinary but canonicalize to executorBinary.
+    normalized.executorBinary = assertNonEmptyString(raw.codexBinary, "executorBinary");
   }
   if ("branchPrefix" in raw) {
     normalized.branchPrefix = assertGitRef(raw.branchPrefix, "branchPrefix");
@@ -364,6 +377,18 @@ function applySetupChanges(document: Record<string, unknown>, changes: SetupConf
   assertNoConflictingLocalCiIntent(changes);
 
   const nextDocument = { ...document };
+  // Canonicalize the legacy binary alias on every write so existing configs
+  // migrate even when the operator edits an unrelated field, and the stale
+  // codexBinary key never survives in the saved document. The legacy value is
+  // adopted only when the canonical key is absent/empty (a present executorBinary,
+  // even a placeholder, stays authoritative — matching normalizeConfigDocument).
+  if ("codexBinary" in nextDocument) {
+    const canonical = nextDocument.executorBinary;
+    if (!(typeof canonical === "string" && canonical.trim() !== "")) {
+      nextDocument.executorBinary = nextDocument.codexBinary;
+    }
+    delete nextDocument.codexBinary;
+  }
   if (changes.repoPath !== undefined) {
     nextDocument.repoPath = changes.repoPath;
   }
@@ -379,11 +404,11 @@ function applySetupChanges(document: Record<string, unknown>, changes: SetupConf
   if (changes.stateFile !== undefined) {
     nextDocument.stateFile = changes.stateFile;
   }
-  if (changes.codexBinary !== undefined) {
-    nextDocument.codexBinary = changes.codexBinary;
-    // executorBinary takes precedence as the preferred alias, so a stale one
-    // would shadow this edit; drop it and canonicalize to codexBinary.
-    delete nextDocument.executorBinary;
+  if (changes.executorBinary !== undefined) {
+    nextDocument.executorBinary = changes.executorBinary;
+    // Drop any stale legacy codexBinary alias so it cannot shadow this edit;
+    // the writer only ever persists the canonical executorBinary key.
+    delete nextDocument.codexBinary;
   }
   if (changes.branchPrefix !== undefined) {
     nextDocument.branchPrefix = changes.branchPrefix;
@@ -558,8 +583,8 @@ function nextSemanticFieldValue(
       return changes.workspaceRoot ?? null;
     case "stateFile":
       return changes.stateFile ?? null;
-    case "codexBinary":
-      return changes.codexBinary ?? null;
+    case "executorBinary":
+      return changes.executorBinary ?? null;
     case "branchPrefix":
       return changes.branchPrefix ?? null;
     case "workspacePreparationCommand":

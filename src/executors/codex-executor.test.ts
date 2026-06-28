@@ -40,7 +40,7 @@ function createConfig(overrides: Partial<SupervisorConfig> = {}): SupervisorConf
     workspaceRoot: "/tmp/workspaces",
     stateBackend: "json",
     stateFile: "/tmp/state.json",
-    codexBinary: "/usr/bin/codex",
+    executorBinary: "/usr/bin/codex",
     codexModelStrategy: "inherit",
     codexReasoningEffortByState: {},
     codexReasoningEscalateOnRepeatedFailure: true,
@@ -132,7 +132,7 @@ function createStartContext(config: SupervisorConfig): AgentTurnContext {
 // ===== Capability detection tests =====
 
 test("CodexExecutor reports supportsReasoningControl=true for codex binary", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/codex" });
+  const config = createConfig({ executorBinary: "/usr/bin/codex" });
   const executor = new CodexExecutor({
     config,
     probeCapabilitiesImpl: () => detectCodexCliCapabilities(config),
@@ -143,7 +143,7 @@ test("CodexExecutor reports supportsReasoningControl=true for codex binary", () 
 });
 
 test("CodexExecutor reports supportsResume=false for non-codex binary", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/custom-agent" });
+  const config = createConfig({ executorBinary: "/usr/bin/custom-agent" });
   const executor = new CodexExecutor({
     config,
     probeCapabilitiesImpl: () => detectCodexCliCapabilities(config),
@@ -165,7 +165,7 @@ test("CodexExecutor preserves base capabilities from detectCodexCliCapabilities"
 });
 
 test("CodexExecutor adds supportsReasoningControl on top of base capabilities", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/custom-agent" });
+  const config = createConfig({ executorBinary: "/usr/bin/custom-agent" });
   const executor = new CodexExecutor({
     config,
     probeCapabilitiesImpl: () => ({ supportsResume: false, supportsStructuredResult: false }),
@@ -345,7 +345,7 @@ test("CodexExecutor with runCodexTurnImpl delegates to mock implementation", asy
 });
 
 test("CodexExecutor produces same capabilities as createCodexAgentRunner + reasoning control", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/codex" });
+  const config = createConfig({ executorBinary: "/usr/bin/codex" });
   const runner = createCodexAgentRunner({ config });
   const executor = new CodexExecutor({ config });
   assert.equal(executor.capabilities.supportsResume, runner.capabilities.supportsResume);
@@ -447,7 +447,7 @@ test("CodexExecutor via executorToAgentRunner produces valid AgentRunner", async
 // ===== createExecutor factory tests =====
 
 test("createExecutor returns CodexExecutor for codex binary config", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/codex" });
+  const config = createConfig({ executorBinary: "/usr/bin/codex" });
   const executor = createExecutor(config);
   assert.ok(executor instanceof CodexExecutor);
   assert.equal(executor.capabilities.supportsReasoningControl, true);
@@ -466,52 +466,52 @@ test("createExecutor wraps provided runner with agentRunnerToExecutor", () => {
 });
 
 test("createExecutor returns OpenCodeExecutor for opencode binary (Phase 4)", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/opencode" });
+  const config = createConfig({ executorBinary: "/usr/bin/opencode" });
   const executor = createExecutor(config);
   assert.ok(executor instanceof (require("./opencode-executor").OpenCodeExecutor));
 });
 
 test("createExecutor returns ClaudeCodeExecutor for claude binary (Phase 4)", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/claude" });
+  const config = createConfig({ executorBinary: "/usr/bin/claude" });
   const executor = createExecutor(config);
   assert.ok(executor instanceof (require("./claude-code-executor").ClaudeCodeExecutor));
 });
 
 test("resolveExecutorKind defaults to codex for unrecognized binary", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/custom-tool" });
+  const config = createConfig({ executorBinary: "/usr/bin/custom-tool" });
   assert.equal(resolveExecutorKind(config), "codex");
 });
 
 test("resolveExecutorKind detects opencode", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/opencode" });
+  const config = createConfig({ executorBinary: "/usr/bin/opencode" });
   assert.equal(resolveExecutorKind(config), "opencode");
 });
 
 test("resolveExecutorKind detects claude", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/claude-code" });
+  const config = createConfig({ executorBinary: "/usr/bin/claude-code" });
   assert.equal(resolveExecutorKind(config), "claude");
 });
 
 test("resolveExecutorKind prefers an explicit executorKind over binary inference", () => {
   // Aliased binary that would otherwise misresolve to codex.
-  const config = createConfig({ codexBinary: "/usr/local/bin/oc", executorKind: "opencode" });
+  const config = createConfig({ executorBinary: "/usr/local/bin/oc", executorKind: "opencode" });
   assert.equal(resolveExecutorKind(config), "opencode");
 });
 
 test("resolveExecutorKind explicit executorKind overrides a conflicting binary name", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/opencode", executorKind: "codex" });
+  const config = createConfig({ executorBinary: "/usr/bin/opencode", executorKind: "codex" });
   assert.equal(resolveExecutorKind(config), "codex");
 });
 
 test("resolveExecutorKind honors an explicit mock kind, making MockExecutor reachable via createExecutor", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/custom-tool", executorKind: "mock" });
+  const config = createConfig({ executorBinary: "/usr/bin/custom-tool", executorKind: "mock" });
   assert.equal(resolveExecutorKind(config), "mock");
   assert.ok(createExecutor(config) instanceof MockExecutor);
 });
 
 test("CodexExecutor reports supportsResume=true for an aliased codex binary with explicit executorKind", () => {
   // Aliased binary basename ("cx") would otherwise yield false capabilities.
-  const config = createConfig({ codexBinary: "/usr/local/bin/cx", executorKind: "codex" });
+  const config = createConfig({ executorBinary: "/usr/local/bin/cx", executorKind: "codex" });
   const executor = new CodexExecutor({ config });
   assert.equal(executor.capabilities.supportsResume, true);
   assert.equal(executor.capabilities.supportsStructuredResult, true);

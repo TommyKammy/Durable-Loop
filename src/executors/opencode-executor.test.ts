@@ -47,7 +47,7 @@ function createConfig(overrides: Partial<SupervisorConfig> = {}): SupervisorConf
     workspaceRoot: "/tmp/workspaces",
     stateBackend: "json",
     stateFile: "/tmp/state.json",
-    codexBinary: "/usr/bin/opencode",
+    executorBinary: "/usr/bin/opencode",
     codexModelStrategy: "inherit",
     codexReasoningEffortByState: {},
     codexReasoningEscalateOnRepeatedFailure: true,
@@ -162,7 +162,7 @@ function createResumeContext(config: SupervisorConfig, sessionId: string): Agent
 // ===== Capability detection tests =====
 
 test("OpenCodeExecutor reports supportsResume=true for opencode binary", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/opencode" });
+  const config = createConfig({ executorBinary: "/usr/bin/opencode" });
   const executor = new OpenCodeExecutor({ config });
   assert.equal(executor.capabilities.supportsResume, true);
   assert.equal(executor.capabilities.supportsStructuredResult, true);
@@ -170,7 +170,7 @@ test("OpenCodeExecutor reports supportsResume=true for opencode binary", () => {
 });
 
 test("OpenCodeExecutor reports supportsResume=false for non-opencode binary", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/custom-agent" });
+  const config = createConfig({ executorBinary: "/usr/bin/custom-agent" });
   const executor = new OpenCodeExecutor({
     config,
     probeCapabilitiesImpl: () => detectOpenCodeCapabilities(config),
@@ -182,13 +182,13 @@ test("OpenCodeExecutor reports supportsResume=false for non-opencode binary", ()
 });
 
 test("detectOpenCodeCapabilities returns true for opencode binary", () => {
-  const caps = detectOpenCodeCapabilities({ codexBinary: "/usr/local/bin/opencode" });
+  const caps = detectOpenCodeCapabilities({ executorBinary: "/usr/local/bin/opencode" });
   assert.equal(caps.supportsResume, true);
   assert.equal(caps.supportsStructuredResult, true);
 });
 
 test("detectOpenCodeCapabilities returns false for non-opencode binary", () => {
-  const caps = detectOpenCodeCapabilities({ codexBinary: "/usr/bin/codex" });
+  const caps = detectOpenCodeCapabilities({ executorBinary: "/usr/bin/codex" });
   assert.equal(caps.supportsResume, false);
   assert.equal(caps.supportsStructuredResult, false);
 });
@@ -200,13 +200,13 @@ test("detectOpenCodeCapabilities defaults to opencode when no config", () => {
 });
 
 test("detectOpenCodeCapabilities honors an explicit executorKind for an aliased binary", () => {
-  const caps = detectOpenCodeCapabilities({ codexBinary: "/usr/local/bin/oc", executorKind: "opencode" });
+  const caps = detectOpenCodeCapabilities({ executorBinary: "/usr/local/bin/oc", executorKind: "opencode" });
   assert.equal(caps.supportsResume, true);
   assert.equal(caps.supportsStructuredResult, true);
 });
 
 test("OpenCodeExecutor reports supportsResume=true for an aliased binary with explicit executorKind", () => {
-  const config = createConfig({ codexBinary: "/usr/local/bin/oc", executorKind: "opencode" });
+  const config = createConfig({ executorBinary: "/usr/local/bin/oc", executorKind: "opencode" });
   const executor = new OpenCodeExecutor({ config });
   assert.equal(executor.capabilities.supportsResume, true);
   assert.equal(executor.capabilities.supportsStructuredResult, true);
@@ -322,14 +322,14 @@ test("OpenCodeExecutor preserves sessionId for resume context", async () => {
 // ===== Factory tests =====
 
 test("createExecutor returns OpenCodeExecutor for opencode binary", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/opencode" });
+  const config = createConfig({ executorBinary: "/usr/bin/opencode" });
   const executor = createExecutor(config);
   assert.ok(executor instanceof OpenCodeExecutor);
   assert.equal(executor.capabilities.supportsReasoningControl, true);
 });
 
 test("createExecutor wraps provided runner for opencode config", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/opencode" });
+  const config = createConfig({ executorBinary: "/usr/bin/opencode" });
   const mockRunner: AgentRunner = {
     capabilities: { supportsResume: false, supportsStructuredResult: false },
     async runTurn() {
@@ -352,7 +352,7 @@ test("createExecutor wraps provided runner for opencode config", () => {
 });
 
 test("resolveExecutorKind detects opencode", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/opencode" });
+  const config = createConfig({ executorBinary: "/usr/bin/opencode" });
   assert.equal(resolveExecutorKind(config), "opencode");
 });
 
@@ -513,7 +513,7 @@ test("OpenCodeExecutor returns null structuredResult for unstructured output", a
 
 test("OpenCodeExecutor applies reasoning variant when state is provided", async () => {
   const config = createConfig({
-    codexBinary: "/usr/bin/opencode",
+    executorBinary: "/usr/bin/opencode",
     codexReasoningEffortByState: { implementing: "high" },
   });
 
@@ -543,7 +543,7 @@ test("OpenCodeExecutor applies reasoning variant when state is provided", async 
 });
 
 test("createExecutor passes classifyFailureImpl to OpenCodeExecutor", async () => {
-  const config = createConfig({ codexBinary: "/usr/bin/opencode" });
+  const config = createConfig({ executorBinary: "/usr/bin/opencode" });
   let classifyCalled = false;
   const classifyFailureImpl = (_msg: string | null | undefined) => {
     classifyCalled = true;
@@ -560,7 +560,7 @@ test("createExecutor passes classifyFailureImpl to OpenCodeExecutor", async () =
 });
 
 test("createExecutor passes buildFailureContextImpl to OpenCodeExecutor", () => {
-  const config = createConfig({ codexBinary: "/usr/bin/opencode" });
+  const config = createConfig({ executorBinary: "/usr/bin/opencode" });
   const buildFailureContextImpl = (
     _category: any,
     summary: string,

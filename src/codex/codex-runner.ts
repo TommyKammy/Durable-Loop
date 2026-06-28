@@ -72,7 +72,7 @@ export async function runCodexTurn(
           prompt,
         ];
     const result = await runCommand(
-      config.codexBinary,
+      config.executorBinary,
       commandArgs,
       {
         cwd: workspacePath,

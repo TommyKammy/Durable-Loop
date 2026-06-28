@@ -52,7 +52,7 @@ export type SetupReadinessFieldKey =
   | "defaultBranch"
   | "workspaceRoot"
   | "stateFile"
-  | "codexBinary"
+  | "executorBinary"
   | "branchPrefix"
   | "workspacePreparationCommand"
   | "localCiCommand"
@@ -602,7 +602,7 @@ function buildBlockers(args: {
             ? {
               kind: "verify_codex_cli",
               summary: check.summary,
-              fieldKeys: ["codexBinary"],
+              fieldKeys: ["executorBinary"],
             }
             : {
               kind: "repair_worktree_layout",
@@ -648,12 +648,9 @@ function buildBlockers(args: {
   // that the parser rejects (e.g. a new field not registered as a setup field)
   // would make `loadConfig` throw while setup readiness reports no blocker.
   const coveredFieldKeys = new Set<string>(blockers.flatMap((blocker) => [...blocker.fieldKeys]));
-  // codexBinary and executorBinary are the same binary; if one is already
-  // blocked (e.g. a missing-binary blocker), the alias is covered too, so we
-  // do not emit a confusing second blocker for the other key.
-  if (coveredFieldKeys.has("codexBinary")) {
-    coveredFieldKeys.add("executorBinary");
-  }
+  // codexBinary is a legacy input alias for executorBinary; if the canonical key
+  // is already blocked (e.g. a missing-binary blocker), treat the legacy key as
+  // covered too so we never emit a confusing second blocker for the same binary.
   if (coveredFieldKeys.has("executorBinary")) {
     coveredFieldKeys.add("codexBinary");
   }

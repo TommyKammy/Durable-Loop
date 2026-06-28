@@ -19,7 +19,7 @@ function createConfig(overrides: Partial<SupervisorConfig> = {}): SupervisorConf
     workspaceRoot: "/tmp/workspaces",
     stateBackend: "json",
     stateFile: "/tmp/state.json",
-    codexBinary: "/usr/bin/codex",
+    executorBinary: "/usr/bin/codex",
     codexModelStrategy: "inherit",
     codexReasoningEffortByState: {},
     codexReasoningEscalateOnRepeatedFailure: true,
@@ -392,7 +392,7 @@ test("runLocalReviewExecution invokes verifier only when actionable high-severit
   assert.equal(withoutVerifier.verifierReport, null);
 });
 
-test("runLocalReviewExecution supports fake-runner reviewer-only orchestration without codexBinary", async () => {
+test("runLocalReviewExecution supports fake-runner reviewer-only orchestration without executorBinary", async () => {
   const fakeRunner = createFakeLocalReviewRunner({
     reviewer: createRoleTurnOutput({
       summary: "Reviewer found only medium risk follow-up",
@@ -414,7 +414,7 @@ test("runLocalReviewExecution supports fake-runner reviewer-only orchestration w
   });
 
   const result = await runLocalReviewExecution({
-    config: createConfig({ codexBinary: "/definitely/not/used" }),
+    config: createConfig({ executorBinary: "/definitely/not/used" }),
     issue: createIssue(),
     branch: "codex/issue-334",
     workspacePath: "/tmp/repo",
@@ -434,7 +434,7 @@ test("runLocalReviewExecution supports fake-runner reviewer-only orchestration w
   assert.equal(result.verifierReport, null);
 });
 
-test("runLocalReviewExecution supports fake-runner verifier orchestration without codexBinary", async () => {
+test("runLocalReviewExecution supports fake-runner verifier orchestration without executorBinary", async () => {
   const fakeRunner = createFakeLocalReviewRunner({
     reviewer: createRoleTurnOutput({
       summary: "Reviewer found a high-severity issue",
@@ -467,7 +467,7 @@ test("runLocalReviewExecution supports fake-runner verifier orchestration withou
   });
 
   const result = await runLocalReviewExecution({
-    config: createConfig({ codexBinary: "/definitely/not/used" }),
+    config: createConfig({ executorBinary: "/definitely/not/used" }),
     issue: createIssue(),
     branch: "codex/issue-334",
     workspacePath: "/tmp/repo",

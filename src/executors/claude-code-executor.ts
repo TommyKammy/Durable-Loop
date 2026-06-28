@@ -44,11 +44,11 @@ import type { PromptBuilder } from "./types";
  * Detect Claude Code CLI capabilities from the binary name.
  */
 export function detectClaudeCodeCapabilities(
-  config?: Pick<SupervisorConfig, "codexBinary" | "executorKind"> | null,
+  config?: Pick<SupervisorConfig, "executorBinary" | "executorKind"> | null,
 ): { supportsResume: boolean; supportsStructuredResult: boolean } {
   // An explicit executorKind proves the provider even when the binary is an
   // alias; otherwise fall back to the binary name.
-  const binaryName = basename(config?.codexBinary ?? "claude").toLowerCase();
+  const binaryName = basename(config?.executorBinary ?? "claude").toLowerCase();
   const looksLikeClaude = config?.executorKind === "claude" || binaryName.includes("claude");
 
   return {
@@ -155,7 +155,7 @@ export const runClaudeCodeTurn: RunExecutorTurnFn = async (
   const args = buildClaudeCodeArgs(config, workspacePath, prompt, state, sessionId);
   const timeoutMs = resolveExecutorTurnTimeoutMinutes(config) * 60_000;
 
-  return runExecutorCliCommand(config.codexBinary, args, {
+  return runExecutorCliCommand(config.executorBinary, args, {
     cwd: workspacePath,
     timeoutMs,
     sessionId,

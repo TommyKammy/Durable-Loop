@@ -14,7 +14,7 @@ function createConfig(overrides: Partial<SupervisorConfig> = {}): SupervisorConf
     workspaceRoot: "/tmp/workspaces",
     stateBackend: "json",
     stateFile: "/tmp/state.json",
-    codexBinary: "/usr/bin/codex",
+    executorBinary: "/usr/bin/codex",
     codexModelStrategy: "inherit",
     codexReasoningEffortByState: {},
     codexReasoningEscalateOnRepeatedFailure: true,
@@ -74,12 +74,12 @@ async function writeExecutableScript(filePath: string, content: string): Promise
 test("runCodexTurn runs a new Codex exec turn and shapes the result from CLI output", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "codex-runner-test-"));
   const workspacePath = path.join(root, "workspace");
-  const codexBinary = path.join(root, "fake-codex.sh");
+  const executorBinary = path.join(root, "fake-codex.sh");
   const argsPath = path.join(root, "args.log");
   await fs.mkdir(workspacePath, { recursive: true });
 
   await writeExecutableScript(
-    codexBinary,
+    executorBinary,
     `#!/bin/sh
 set -eu
 printf '%s\n' "$@" > "${argsPath}"
@@ -106,7 +106,7 @@ exit 1
 `,
   );
 
-  const result = await runCodexTurn(createConfig({ codexBinary }), workspacePath, "prompt body", "implementing");
+  const result = await runCodexTurn(createConfig({ executorBinary }), workspacePath, "prompt body", "implementing");
   const args = (await fs.readFile(argsPath, "utf8")).trim().split("\n");
 
   assert.equal(result.exitCode, 1);
@@ -141,12 +141,12 @@ exit 1
 test("runCodexTurn resumes an existing Codex session without resetting the workspace arg shape", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "codex-runner-test-"));
   const workspacePath = path.join(root, "workspace");
-  const codexBinary = path.join(root, "fake-codex.sh");
+  const executorBinary = path.join(root, "fake-codex.sh");
   const argsPath = path.join(root, "args.log");
   await fs.mkdir(workspacePath, { recursive: true });
 
   await writeExecutableScript(
-    codexBinary,
+    executorBinary,
     `#!/bin/sh
 set -eu
 printf '%s\n' "$@" > "${argsPath}"
@@ -155,7 +155,7 @@ exit 0
 `,
   );
 
-  const result = await runCodexTurn(createConfig({ codexBinary }), workspacePath, "resume prompt", "reproducing", undefined, "session-123");
+  const result = await runCodexTurn(createConfig({ executorBinary }), workspacePath, "resume prompt", "reproducing", undefined, "session-123");
   const args = (await fs.readFile(argsPath, "utf8")).trim().split("\n");
 
   assert.equal(result.exitCode, 0);
@@ -181,12 +181,12 @@ exit 0
 test("runCodexTurn omits bypass flags when execution safety mode is operator gated", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "codex-runner-test-"));
   const workspacePath = path.join(root, "workspace");
-  const codexBinary = path.join(root, "fake-codex.sh");
+  const executorBinary = path.join(root, "fake-codex.sh");
   const argsPath = path.join(root, "args.log");
   await fs.mkdir(workspacePath, { recursive: true });
 
   await writeExecutableScript(
-    codexBinary,
+    executorBinary,
     `#!/bin/sh
 set -eu
 printf '%s\n' "$@" > "${argsPath}"
@@ -197,7 +197,7 @@ exit 0
 
   const result = await runCodexTurn(
     createConfig({
-      codexBinary,
+      executorBinary,
       executionSafetyMode: "operator_gated",
     }),
     workspacePath,
@@ -221,7 +221,7 @@ exit 0
 test("runCodexTurn removes its temp dir when command execution fails", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "codex-runner-test-"));
   const workspacePath = path.join(root, "workspace");
-  const codexBinary = path.join(root, "missing-codex");
+  const executorBinary = path.join(root, "missing-codex");
   await fs.mkdir(workspacePath, { recursive: true });
 
   const rmCalls: string[] = [];
@@ -237,7 +237,7 @@ test("runCodexTurn removes its temp dir when command execution fails", async () 
 
   try {
     await assert.rejects(
-      runCodexTurn(createConfig({ codexBinary }), workspacePath, "prompt body", "implementing"),
+      runCodexTurn(createConfig({ executorBinary }), workspacePath, "prompt body", "implementing"),
       /ENOENT|spawn/i,
     );
   } finally {

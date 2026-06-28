@@ -65,17 +65,17 @@ test("MockExecutor returns configured result", async () => {
 });
 
 test("resolveExecutorKind defaults to codex", () => {
-  assert.equal(resolveExecutorKind({ codexBinary: "/usr/bin/codex" }), "codex");
-  assert.equal(resolveExecutorKind({ codexBinary: "" }), "codex");
-  assert.equal(resolveExecutorKind({ codexBinary: undefined as any }), "codex");
+  assert.equal(resolveExecutorKind({ executorBinary: "/usr/bin/codex" }), "codex");
+  assert.equal(resolveExecutorKind({ executorBinary: "" }), "codex");
+  assert.equal(resolveExecutorKind({ executorBinary: undefined as any }), "codex");
 });
 
 test("resolveExecutorKind detects opencode", () => {
-  assert.equal(resolveExecutorKind({ codexBinary: "/usr/bin/opencode" }), "opencode");
+  assert.equal(resolveExecutorKind({ executorBinary: "/usr/bin/opencode" }), "opencode");
 });
 
 test("resolveExecutorKind detects claude", () => {
-  assert.equal(resolveExecutorKind({ codexBinary: "/usr/bin/claude" }), "claude");
+  assert.equal(resolveExecutorKind({ executorBinary: "/usr/bin/claude" }), "claude");
 });
 
 test("capability fallbacks: supportsResume defaults to false when not provided", () => {
@@ -158,7 +158,7 @@ test("MockExecutor with all capabilities enabled", () => {
 });
 
 test("createExecutor returns CodexExecutor for codex config (Phase 1)", () => {
-  const config = { codexBinary: "/usr/bin/codex" } as any;
+  const config = { executorBinary: "/usr/bin/codex" } as any;
   const executor = createExecutor(config);
   assert.equal(executor.capabilities.supportsResume, true);
   assert.equal(executor.capabilities.supportsStructuredResult, true);
@@ -203,7 +203,7 @@ test("structural supertype: AgentRunner object is directly assignable to Executo
 });
 
 test("resolveExecutorKind handles mixed-case binary names", () => {
-  assert.equal(resolveExecutorKind({ codexBinary: "/usr/local/bin/CodeX" }), "codex");
-  assert.equal(resolveExecutorKind({ codexBinary: "/usr/local/bin/OpenCode" }), "opencode");
-  assert.equal(resolveExecutorKind({ codexBinary: "/usr/local/bin/Claude" }), "claude");
+  assert.equal(resolveExecutorKind({ executorBinary: "/usr/local/bin/CodeX" }), "codex");
+  assert.equal(resolveExecutorKind({ executorBinary: "/usr/local/bin/OpenCode" }), "opencode");
+  assert.equal(resolveExecutorKind({ executorBinary: "/usr/local/bin/Claude" }), "claude");
 });

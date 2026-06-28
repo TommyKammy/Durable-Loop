@@ -42,7 +42,7 @@ test("diagnoseSetupReadiness explains copied starter profile placeholders as fir
       ["repoPath", "Repository path still contains a starter placeholder. Replace it with the absolute path to the managed repository."],
       ["repoSlug", "Repository slug still contains a starter placeholder. Replace it with the GitHub owner/repo slug for the managed repository."],
       ["workspaceRoot", "Workspace root still contains a starter placeholder. Replace it with the directory where issue worktrees should be created."],
-      ["codexBinary", "Codex binary still contains a starter placeholder. Replace it with a PATH command such as codex or the path to the Codex executable."],
+      ["executorBinary", "Codex binary still contains a starter placeholder. Replace it with a PATH command such as codex or the path to the Codex executable."],
     ],
   );
   assert.deepEqual(
@@ -53,7 +53,7 @@ test("diagnoseSetupReadiness explains copied starter profile placeholders as fir
       ["invalid_repo_path", ["repoPath"]],
       ["invalid_repo_slug", ["repoSlug"]],
       ["invalid_workspace_root", ["workspaceRoot"]],
-      ["invalid_codex_binary", ["codexBinary"]],
+      ["invalid_executor_binary", ["executorBinary"]],
     ],
   );
   assert.match(
@@ -203,7 +203,7 @@ test("diagnoseSetupReadiness blocks Python/CLI starter command placeholders", as
       ["repoPath", "Repository path still contains a starter placeholder. Replace it with the absolute path to the managed repository."],
       ["repoSlug", "Repository slug still contains a starter placeholder. Replace it with the GitHub owner/repo slug for the managed repository."],
       ["workspaceRoot", "Workspace root still contains a starter placeholder. Replace it with the directory where issue worktrees should be created."],
-      ["codexBinary", "Codex binary still contains a starter placeholder. Replace it with a PATH command such as codex or the path to the Codex executable."],
+      ["executorBinary", "Codex binary still contains a starter placeholder. Replace it with a PATH command such as codex or the path to the Codex executable."],
       [
         "workspacePreparationCommand",
         "Workspace preparation command still contains a starter placeholder. Replace it with the repo-owned setup command or clear it intentionally.",
@@ -252,7 +252,7 @@ function buildConfigDocument(args: {
     defaultBranch: "main",
     workspaceRoot: args.workspaceRoot,
     stateFile: args.stateFile,
-    codexBinary: process.execPath,
+    executorBinary: process.execPath,
     branchPrefix: "codex/issue-",
     reviewBotLogins: ["chatgpt-codex-connector"],
     workspacePreparationCommand: args.workspacePreparationCommand,
@@ -1268,7 +1268,7 @@ test("diagnoseSetupReadiness surfaces an invalid config field that is not a regi
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       // Invalid value for a config field that the parser rejects but that is not
       // rendered as a setup field; without the catch-all it would not block.
@@ -1290,7 +1290,7 @@ test("diagnoseSetupReadiness surfaces an invalid config field that is not a regi
   );
 });
 
-test("diagnoseSetupReadiness does not double-block the binary when both codexBinary and executorBinary are absent", async (t) => {
+test("diagnoseSetupReadiness does not double-block the binary when both executorBinary and executorBinary are absent", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-setup-readiness-"));
   t.after(async () => {
     await fs.rm(root, { recursive: true, force: true });
@@ -1306,7 +1306,7 @@ test("diagnoseSetupReadiness does not double-block the binary when both codexBin
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
       branchPrefix: "codex/issue-",
-      // Neither codexBinary nor its executorBinary alias is set.
+      // Neither executorBinary nor its executorBinary alias is set.
     }),
     "utf8",
   );

@@ -77,7 +77,7 @@ test("config field posture metadata classifies setup and automation-expanding fi
       "defaultBranch",
       "workspaceRoot",
       "stateFile",
-      "codexBinary",
+      "executorBinary",
       "branchPrefix",
       "trustMode",
       "executionSafetyMode",
@@ -89,7 +89,7 @@ test("config field posture metadata classifies setup and automation-expanding fi
       ["defaultBranch", "required"],
       ["workspaceRoot", "required"],
       ["stateFile", "required"],
-      ["codexBinary", "required"],
+      ["executorBinary", "required"],
       ["branchPrefix", "required"],
       ["trustMode", "required"],
       ["executionSafetyMode", "required"],
@@ -186,7 +186,7 @@ test("config-owned local CI summary type covers diagnostics behavior", () => {
   assert.equal(summary.adoptionFlow?.state, "configured");
 });
 
-test("loadConfig leaves bare codexBinary values unresolved for PATH lookup", async (t) => {
+test("loadConfig leaves bare executorBinary values unresolved for PATH lookup", async (t) => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
   t.after(async () => {
     await fs.rm(tempDir, { recursive: true, force: true });
@@ -201,7 +201,7 @@ test("loadConfig leaves bare codexBinary values unresolved for PATH lookup", asy
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
     }),
     "utf8",
@@ -209,7 +209,7 @@ test("loadConfig leaves bare codexBinary values unresolved for PATH lookup", asy
 
   const config = loadConfig(configPath);
 
-  assert.equal(config.codexBinary, "codex");
+  assert.equal(config.executorBinary, "codex");
   assert.equal(config.repoPath, tempDir);
   assert.equal(config.workspaceRoot, path.join(tempDir, "workspaces"));
   assert.equal(config.stateFile, path.join(tempDir, "state.json"));
@@ -227,7 +227,7 @@ test("loadConfig parses an explicit executorKind, omits it when absent, and reje
     defaultBranch: "main",
     workspaceRoot: "./workspaces",
     stateFile: "./state.json",
-    codexBinary: "codex",
+    executorBinary: "codex",
     branchPrefix: "codex/issue-",
   };
   const writeConfig = async (name: string, extra: Record<string, unknown>): Promise<string> => {
@@ -258,7 +258,7 @@ test("loadConfig parses an explicit executorKind, omits it when absent, and reje
   );
 });
 
-test("loadConfig accepts executorBinary as a backward-compatible alias for codexBinary", async (t) => {
+test("loadConfig accepts executorBinary as a backward-compatible alias for executorBinary", async (t) => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
   t.after(async () => {
     await fs.rm(tempDir, { recursive: true, force: true });
@@ -278,28 +278,29 @@ test("loadConfig accepts executorBinary as a backward-compatible alias for codex
     return configPath;
   };
 
-  // executorBinary alone populates the (internal) codexBinary field.
+  // executorBinary populates the canonical executorBinary field.
   const neutral = loadConfig(await writeConfig("neutral.json", { executorBinary: "opencode" }));
-  assert.equal(neutral.codexBinary, "opencode");
+  assert.equal(neutral.executorBinary, "opencode");
 
-  // codexBinary still works on its own (backward compatible).
+  // The legacy codexBinary key still works on its own (read-only input alias,
+  // migrated into executorBinary at load).
   const legacy = loadConfig(await writeConfig("legacy.json", { codexBinary: "codex" }));
-  assert.equal(legacy.codexBinary, "codex");
+  assert.equal(legacy.executorBinary, "codex");
 
-  // executorBinary is the preferred key, so a usable one wins even when a legacy
+  // executorBinary is canonical, so a usable one wins even when a legacy
   // codexBinary is still present (the common migration case is not ignored).
-  const both = loadConfig(await writeConfig("both.json", { executorBinary: "opencode", codexBinary: "codex" }));
-  assert.equal(both.codexBinary, "opencode");
+  const both = loadConfig(await writeConfig("both.json", { codexBinary: "codex", executorBinary: "opencode" }));
+  assert.equal(both.executorBinary, "opencode");
 
-  // A malformed (empty) executorBinary falls back to a valid codexBinary.
+  // A malformed (empty) executorBinary falls back to a valid legacy codexBinary.
   const malformed = loadConfig(await writeConfig("malformed.json", { executorBinary: "", codexBinary: "codex" }));
-  assert.equal(malformed.codexBinary, "codex");
+  assert.equal(malformed.executorBinary, "codex");
 
-  // A starter placeholder in executorBinary is rejected the same as codexBinary.
+  // A starter placeholder in the legacy codexBinary is rejected the same as executorBinary.
   const placeholderAliasPath = await writeConfig("placeholder-alias.json", {
-    executorBinary: "/absolute/path/to/codex",
+    codexBinary: "/absolute/path/to/codex",
   });
-  assert.throws(() => loadConfig(placeholderAliasPath), /codexBinary|executorBinary|placeholder/i);
+  assert.throws(() => loadConfig(placeholderAliasPath), /executorBinary|codexBinary|placeholder/i);
 
   // A real executorBinary overrides a leftover codexBinary starter placeholder.
   const overridePlaceholder = loadConfig(
@@ -308,16 +309,24 @@ test("loadConfig accepts executorBinary as a backward-compatible alias for codex
       executorBinary: "opencode",
     }),
   );
-  assert.equal(overridePlaceholder.codexBinary, "opencode");
+  assert.equal(overridePlaceholder.executorBinary, "opencode");
+
+  // A legacy codexBinary must NOT mask a canonical executorBinary that is still a
+  // starter placeholder — the canonical key is authoritative and stays invalid.
+  const maskedPlaceholderPath = await writeConfig("masked-placeholder.json", {
+    executorBinary: "/absolute/path/to/codex",
+    codexBinary: "opencode",
+  });
+  assert.throws(() => loadConfig(maskedPlaceholderPath), /executorBinary|placeholder/i);
 
   // Neither present fails closed, naming both keys.
   const missingPath = await writeConfig("missing.json", {});
   assert.throws(() => loadConfig(missingPath), /executorBinary \(or codexBinary\)/);
 
-  // loadConfigSummary must not report a missing codexBinary when only the
-  // neutral executorBinary key is supplied.
-  const summary = loadConfigSummary(await writeConfig("summary.json", { executorBinary: "opencode" }));
-  assert.ok(!summary.missingRequiredFields.includes("codexBinary"));
+  // loadConfigSummary must not report a missing executorBinary when only the
+  // legacy codexBinary key is supplied.
+  const summary = loadConfigSummary(await writeConfig("summary.json", { codexBinary: "codex" }));
+  assert.ok(!summary.missingRequiredFields.includes("executorBinary"));
 });
 
 test("resolveExecutorTurnTimeoutMinutes prefers the per-executor override else the shared timeout", () => {
@@ -340,7 +349,7 @@ test("loadConfig parses executorTimeoutMinutes (present/absent/invalid)", async 
     defaultBranch: "main",
     workspaceRoot: "./workspaces",
     stateFile: "./state.json",
-    codexBinary: "codex",
+    executorBinary: "codex",
     branchPrefix: "codex/issue-",
   };
   const writeConfig = async (name: string, extra: Record<string, unknown>): Promise<string> => {
@@ -386,7 +395,7 @@ test("loadConfigSummary reports missing required fields without throwing", async
     "repoSlug",
     "workspaceRoot",
     "stateFile",
-    "codexBinary",
+    "executorBinary",
     "branchPrefix",
   ]);
   assert.equal(summary.config, null);
@@ -403,7 +412,7 @@ test("loadConfigSummaryFromDocument resolves config-relative paths for in-memory
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "./bin/codex",
+      executorBinary: "./bin/codex",
       branchPrefix: "codex/issue-",
     },
     configPath,
@@ -414,7 +423,7 @@ test("loadConfigSummaryFromDocument resolves config-relative paths for in-memory
   assert.equal(summary.config?.repoPath, path.join(path.dirname(configPath)));
   assert.equal(summary.config?.workspaceRoot, path.join(path.dirname(configPath), "workspaces"));
   assert.equal(summary.config?.stateFile, path.join(path.dirname(configPath), "state.json"));
-  assert.equal(summary.config?.codexBinary, path.join(path.dirname(configPath), "bin", "codex"));
+  assert.equal(summary.config?.executorBinary, path.join(path.dirname(configPath), "bin", "codex"));
   assert.deepEqual(summary.missingRequiredFields, []);
   assert.deepEqual(summary.invalidFields, []);
 });
@@ -454,7 +463,7 @@ test("loadConfigSummary surfaces the default trust diagnostics posture", async (
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
     }),
     "utf8",
@@ -486,7 +495,7 @@ test("loadConfig keeps local review disabled by default while using the opiniona
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
     }),
     "utf8",
@@ -527,7 +536,7 @@ test("loadConfig keeps release readiness advisory by default", async (t) => {
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
     }),
     "utf8",
@@ -553,7 +562,7 @@ test("loadConfig accepts explicit release readiness release-publication gate opt
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       releaseReadinessGate: "block_release_publication",
     }),
@@ -580,7 +589,7 @@ test("loadConfig rejects unsupported release readiness gate postures", async (t)
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       releaseReadinessGate: "block_everything",
     }),
@@ -606,7 +615,7 @@ test("loadConfig maps named local review posture presets onto existing low-level
     defaultBranch: "main",
     workspaceRoot: "./workspaces",
     stateFile: "./state.json",
-    codexBinary: "codex",
+    executorBinary: "codex",
     branchPrefix: "codex/issue-",
   };
   const cases = [
@@ -715,7 +724,7 @@ test("loadConfig rejects unsupported local review posture presets", async (t) =>
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       localReviewPosture: "auto_repair_everything",
     }),
@@ -743,7 +752,7 @@ test("loadConfig accepts explicit local review same-PR follow-up repair opt-in",
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       localReviewFollowUpRepairEnabled: true,
     }),
@@ -769,7 +778,7 @@ test("loadConfig accepts explicit local review same-PR manual-review repair opt-
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       localReviewManualReviewRepairEnabled: true,
     }),
@@ -795,7 +804,7 @@ test("loadConfig accepts explicit publishable path allowlist markers", async (t)
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       publishablePathAllowlistMarkers: ["publishable-path-hygiene: allowlist"],
     }),
@@ -821,7 +830,7 @@ test("loadConfig rejects empty publishable path allowlist markers", async (t) =>
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       publishablePathAllowlistMarkers: ["", "   ", "publishable-path-hygiene: allowlist"],
     }),
@@ -847,7 +856,7 @@ test("loadConfig accepts explicit approved tracked top-level entries", async (t)
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       approvedTrackedTopLevelEntries: ["README.md", "src", ".github"],
     }),
@@ -873,7 +882,7 @@ test("loadConfig rejects nested approved tracked top-level entries", async (t) =
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       approvedTrackedTopLevelEntries: ["README.md", "docs/guide.md"],
     }),
@@ -901,7 +910,7 @@ test("loadConfig accepts explicit local review follow-up issue creation opt-in",
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       localReviewFollowUpIssueCreationEnabled: true,
     }),
@@ -927,7 +936,7 @@ test("loadConfig rejects enabling same-PR follow-up repair together with follow-
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       localReviewFollowUpRepairEnabled: true,
       localReviewFollowUpIssueCreationEnabled: true,
@@ -964,7 +973,7 @@ test("loadConfigSummary accepts an explicit safer trust diagnostics posture with
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       trustMode: "untrusted_or_mixed",
       executionSafetyMode: "operator_gated",
@@ -1025,7 +1034,7 @@ test("loadConfig rejects negative orphan cleanup grace values", async (t) => {
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       cleanupOrphanedWorkspacesAfterHours: -1,
     }),
@@ -1040,7 +1049,7 @@ test("loadConfig rejects negative orphan cleanup grace values", async (t) => {
   assert.throws(() => loadConfig(configPath), /Invalid config field: cleanupOrphanedWorkspacesAfterHours/);
 });
 
-test("loadConfig still resolves codexBinary when it is an explicit relative path", async (t) => {
+test("loadConfig still resolves executorBinary when it is an explicit relative path", async (t) => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
   t.after(async () => {
     await fs.rm(tempDir, { recursive: true, force: true });
@@ -1055,7 +1064,7 @@ test("loadConfig still resolves codexBinary when it is an explicit relative path
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "./bin/codex",
+      executorBinary: "./bin/codex",
       branchPrefix: "codex/issue-",
     }),
     "utf8",
@@ -1063,10 +1072,10 @@ test("loadConfig still resolves codexBinary when it is an explicit relative path
 
   const config = loadConfig(configPath);
 
-  assert.equal(config.codexBinary, path.join(tempDir, "bin", "codex"));
+  assert.equal(config.executorBinary, path.join(tempDir, "bin", "codex"));
 });
 
-test("loadConfig treats backslash-separated codexBinary values as explicit relative paths", async (t) => {
+test("loadConfig treats backslash-separated executorBinary values as explicit relative paths", async (t) => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-"));
   t.after(async () => {
     await fs.rm(tempDir, { recursive: true, force: true });
@@ -1081,7 +1090,7 @@ test("loadConfig treats backslash-separated codexBinary values as explicit relat
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: ".\\bin\\codex",
+      executorBinary: ".\\bin\\codex",
       branchPrefix: "codex/issue-",
     }),
     "utf8",
@@ -1089,7 +1098,7 @@ test("loadConfig treats backslash-separated codexBinary values as explicit relat
 
   const config = loadConfig(configPath);
 
-  assert.equal(config.codexBinary, path.resolve(tempDir, ".\\bin\\codex"));
+  assert.equal(config.executorBinary, path.resolve(tempDir, ".\\bin\\codex"));
 });
 
 test("loadConfig defaults copilotReviewTimeoutAction to continue", async (t) => {
@@ -1107,7 +1116,7 @@ test("loadConfig defaults copilotReviewTimeoutAction to continue", async (t) => 
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
     }),
     "utf8",
@@ -1133,7 +1142,7 @@ test("loadConfig skips Epic titles by default during runnable selection", async 
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
     }),
     "utf8",
@@ -1159,7 +1168,7 @@ test("loadConfig exposes the configured candidate discovery fetch window", async
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       candidateDiscoveryFetchWindow: 250,
     }),
@@ -1186,7 +1195,7 @@ test("loadConfig exposes an optional repo-owned local CI command", async (t) => 
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       localCiCommand: "npm run ci:local",
     }),
@@ -1213,7 +1222,7 @@ test("loadConfig accepts a structured repo-owned local CI command", async (t) =>
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       localCiCommand: {
         mode: "structured",
@@ -1248,7 +1257,7 @@ test("loadConfig exposes an optional repo-owned workspace preparation command", 
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       workspacePreparationCommand: "npm ci",
     }),
@@ -1275,7 +1284,7 @@ test("loadConfig falls back to the default candidate discovery fetch window for 
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       candidateDiscoveryFetchWindow: 0,
     }),
@@ -1304,7 +1313,7 @@ test("loadConfig maps reviewBotLogins into the internal configuredReviewProvider
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       reviewBotLogins: ["CodeRabbitAI", "coderabbitai[bot]", "chatgpt-codex-connector", "chatgpt-codex-connector[bot]"],
     }),
@@ -1343,7 +1352,7 @@ test("loadConfig accepts explicit copilotReviewTimeoutAction", async (t) => {
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       copilotReviewTimeoutAction: "block",
     }),
@@ -1370,7 +1379,7 @@ test("loadConfig rejects non-finite configuredBotRateLimitWaitMinutes by falling
       "defaultBranch": "main",
       "workspaceRoot": "./workspaces",
       "stateFile": "./state.json",
-      "codexBinary": "codex",
+      "executorBinary": "codex",
       "branchPrefix": "codex/issue-",
       "configuredBotRateLimitWaitMinutes": 1e309
     }`,
@@ -1397,7 +1406,7 @@ test("loadConfig accepts an explicit configuredBotSettledWaitSeconds override", 
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       configuredBotSettledWaitSeconds: 3,
     }),
@@ -1426,7 +1435,7 @@ test("loadConfig accepts an explicit configuredBotInitialGraceWaitSeconds overri
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       configuredBotInitialGraceWaitSeconds: 120,
     }),
@@ -1456,7 +1465,7 @@ test("loadConfig accepts strict current-head configured-bot signal settings", as
       workspaceRoot: "./.local/worktrees",
       stateBackend: "json",
       stateFile: "./.local/state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       configuredBotRequireCurrentHeadSignal: true,
       configuredBotCurrentHeadSignalTimeoutMinutes: 12,
@@ -1487,7 +1496,7 @@ test("loadConfig accepts Codex Connector review request timeout action", async (
       workspaceRoot: "./.local/worktrees",
       stateBackend: "json",
       stateFile: "./.local/state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       reviewBotLogins: ["chatgpt-codex-connector"],
       configuredBotCurrentHeadSignalTimeoutMinutes: 12,
@@ -1516,7 +1525,7 @@ test("loadConfig accepts bounded Codex Connector review request retry settings",
       workspaceRoot: "./.local/worktrees",
       stateBackend: "json",
       stateFile: "./.local/state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       reviewBotLogins: ["chatgpt-codex-connector"],
       configuredBotCurrentHeadSignalTimeoutAction: "request_review_comment",
@@ -1549,7 +1558,7 @@ test("loadConfig accepts Codex Connector review churn thresholds", async (t) => 
       workspaceRoot: "./.local/worktrees",
       stateBackend: "json",
       stateFile: "./.local/state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       reviewBotLogins: ["chatgpt-codex-connector"],
       codexConnectorReviewChurnMustFixThreshold: 6,
@@ -1579,7 +1588,7 @@ test("loadConfig accepts explicit stale configured-bot reply_only policy", async
       workspaceRoot: "./.local/worktrees",
       stateBackend: "json",
       stateFile: "./.local/state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       staleConfiguredBotReviewPolicy: "reply_only",
     }),
@@ -1606,7 +1615,7 @@ test("loadConfig accepts explicit stale configured-bot reply_and_resolve policy"
       workspaceRoot: "./.local/worktrees",
       stateBackend: "json",
       stateFile: "./.local/state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       staleConfiguredBotReviewPolicy: "reply_and_resolve",
     }),
@@ -1633,7 +1642,7 @@ test("loadConfig rejects unsupported explicit stale configured-bot review polici
       workspaceRoot: "./.local/worktrees",
       stateBackend: "json",
       stateFile: "./.local/state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       staleConfiguredBotReviewPolicy: "resolve_only",
     }),
@@ -1669,7 +1678,7 @@ test("loadConfig accepts an explicit mergeCriticalRecheckSeconds override", asyn
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       pollIntervalSeconds: 120,
       mergeCriticalRecheckSeconds: 30,
@@ -1701,7 +1710,7 @@ test("loadConfig disables mergeCriticalRecheckSeconds for invalid values and pre
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       pollIntervalSeconds: 120,
       mergeCriticalRecheckSeconds: -5,
@@ -1762,7 +1771,7 @@ test("loadConfig defaults localReviewHighSeverityAction to blocked", async (t) =
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
     }),
     "utf8",
@@ -1788,7 +1797,7 @@ test("loadConfig defaults reviewer-type local review thresholds from the global 
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       localReviewConfidenceThreshold: 0.72,
     }),
@@ -1824,7 +1833,7 @@ test("loadConfig accepts reviewer-type local review thresholds", async (t) => {
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       localReviewConfidenceThreshold: 0.7,
       localReviewReviewerThresholds: {
@@ -2003,7 +2012,7 @@ test("shipped example configs use the issue-scoped journal path template and pre
       defaultBranch: "main",
       workspaceRoot: "./workspaces",
       stateFile: "./state.json",
-      codexBinary: "codex",
+      executorBinary: "codex",
       branchPrefix: "codex/issue-",
       issueJournalRelativePath: customJournalPath,
     }),
@@ -2089,15 +2098,15 @@ test("shipped CodeRabbit starter profile uses a fail-fast repoSlug placeholder",
 test("shipped starter profiles fail closed with first-run placeholder guidance", async () => {
   const rootDir = path.resolve(__dirname, "..");
   const expectedInvalidFields = new Map<string, string[]>([
-    ["supervisor.config.example.json", ["repoPath", "repoSlug", "workspaceRoot", "codexBinary"]],
-    ["supervisor.config.copilot.json", ["repoPath", "repoSlug", "workspaceRoot", "codexBinary"]],
-    ["supervisor.config.codex.json", ["repoPath", "repoSlug", "workspaceRoot", "codexBinary"]],
+    ["supervisor.config.example.json", ["repoPath", "repoSlug", "workspaceRoot", "executorBinary"]],
+    ["supervisor.config.copilot.json", ["repoPath", "repoSlug", "workspaceRoot", "executorBinary"]],
+    ["supervisor.config.codex.json", ["repoPath", "repoSlug", "workspaceRoot", "executorBinary"]],
     ["supervisor.config.coderabbit.json", ["repoSlug"]],
-    ["supervisor.config.typescript-node.json", ["repoPath", "repoSlug", "workspaceRoot", "codexBinary"]],
-    ["supervisor.config.nextjs.json", ["repoPath", "repoSlug", "workspaceRoot", "codexBinary"]],
+    ["supervisor.config.typescript-node.json", ["repoPath", "repoSlug", "workspaceRoot", "executorBinary"]],
+    ["supervisor.config.nextjs.json", ["repoPath", "repoSlug", "workspaceRoot", "executorBinary"]],
     [
       "supervisor.config.python-cli.json",
-      ["repoPath", "repoSlug", "workspaceRoot", "codexBinary", "workspacePreparationCommand", "localCiCommand"],
+      ["repoPath", "repoSlug", "workspaceRoot", "executorBinary", "workspacePreparationCommand", "localCiCommand"],
     ],
   ]);
 
@@ -2224,7 +2233,7 @@ test("shipped TypeScript and Node starter profile publishes npm setup and verifi
   assert.equal(raw.localCiCommand, "npm run verify:pre-pr");
   assert.deepEqual(raw.skipTitlePrefixes, ["Epic:"]);
   assert.equal(summary.status, "invalid_config");
-  assert.deepEqual(summary.invalidFields, ["repoPath", "repoSlug", "workspaceRoot", "codexBinary"]);
+  assert.deepEqual(summary.invalidFields, ["repoPath", "repoSlug", "workspaceRoot", "executorBinary"]);
 
   for (const content of docs) {
     assert.match(content, /supervisor\.config\.typescript-node\.json/);
@@ -2260,7 +2269,7 @@ test("shipped Next.js starter profile publishes npm posture and execution-ready 
   assert.equal(raw.localCiCommand, "npm run verify:pre-pr");
   assert.deepEqual(raw.skipTitlePrefixes, ["Epic:"]);
   assert.equal(summary.status, "invalid_config");
-  assert.deepEqual(summary.invalidFields, ["repoPath", "repoSlug", "workspaceRoot", "codexBinary"]);
+  assert.deepEqual(summary.invalidFields, ["repoPath", "repoSlug", "workspaceRoot", "executorBinary"]);
 
   for (const content of docs) {
     assert.match(content, /supervisor\.config\.nextjs\.json/);
@@ -2322,7 +2331,7 @@ test("shipped Python and CLI starter profile publishes portable command substitu
     "repoPath",
     "repoSlug",
     "workspaceRoot",
-    "codexBinary",
+    "executorBinary",
     "workspacePreparationCommand",
     "localCiCommand",
   ]);
@@ -2613,7 +2622,7 @@ test("buildSetupConfigPreview preserves unknown fields and leaves the config fil
     ],
   );
   assert.equal(preview.validation.status, "invalid_config");
-  assert.deepEqual(preview.validation.invalidFields, ["workspaceRoot", "codexBinary"]);
+  assert.deepEqual(preview.validation.invalidFields, ["workspaceRoot", "executorBinary"]);
   assert.match(preview.validation.error ?? "", /Starter profile placeholders must be replaced/i);
   assert.equal(before, after);
 });
@@ -2630,7 +2639,7 @@ test("updateSetupConfig rejects dangerous explicit opt-ins without typed confirm
     defaultBranch: "main",
     workspaceRoot: "./worktrees",
     stateFile: "./state.json",
-    codexBinary: "codex",
+    executorBinary: "codex",
     branchPrefix: "codex/issue-",
     reviewBotLogins: ["chatgpt-codex-connector"],
   };
@@ -2677,7 +2686,7 @@ test("updateSetupConfig allows idempotent dangerous explicit opt-in resubmits wi
         defaultBranch: "main",
         workspaceRoot: "./worktrees",
         stateFile: "./state.json",
-        codexBinary: "codex",
+        executorBinary: "codex",
         branchPrefix: "codex/issue-",
         reviewBotLogins: ["chatgpt-codex-connector"],
         localReviewFollowUpRepairEnabled: true,
@@ -2729,7 +2738,7 @@ test("updateSetupConfig writes confirmed dangerous explicit opt-ins through the 
         defaultBranch: "main",
         workspaceRoot: "./worktrees",
         stateFile: "./state.json",
-        codexBinary: "codex",
+        executorBinary: "codex",
         branchPrefix: "codex/issue-",
         reviewBotLogins: ["chatgpt-codex-connector"],
         experimentalFlag: true,
@@ -2798,7 +2807,7 @@ test("updateSetupConfig preserves unrelated fields, writes a backup, and refresh
         defaultBranch: "main",
         workspaceRoot: "./worktrees",
         stateFile: "./state.json",
-        codexBinary: "codex",
+        executorBinary: "codex",
         branchPrefix: "codex/issue-",
         reviewBotLogins: [],
         experimentalFlag: {
@@ -2849,7 +2858,7 @@ test("updateSetupConfig rotates multiple backups across consecutive writes with 
         defaultBranch: "main",
         workspaceRoot: "./worktrees",
         stateFile: "./state.json",
-        codexBinary: "codex",
+        executorBinary: "codex",
         branchPrefix: "codex/issue-",
         reviewBotLogins: [],
       },
@@ -2922,7 +2931,7 @@ test("updateSetupConfig reports no restart requirement when a typed setup write 
         defaultBranch: "main",
         workspaceRoot: "./worktrees",
         stateFile: "./state.json",
-        codexBinary: "codex",
+        executorBinary: "codex",
         branchPrefix: "codex/issue-",
         reviewBotLogins: ["chatgpt-codex-connector"],
       },
@@ -2973,7 +2982,7 @@ test("updateSetupConfig accepts localCiCommand through the setup-owned write sur
         defaultBranch: "main",
         workspaceRoot: path.join(tempDir, "worktrees"),
         stateFile: path.join(tempDir, "state.json"),
-        codexBinary: process.execPath,
+        executorBinary: process.execPath,
         branchPrefix: "codex/issue-",
         reviewBotLogins: ["chatgpt-codex-connector"],
         experimentalFlag: true,
@@ -3035,7 +3044,7 @@ test("updateSetupConfig accepts trust posture through the setup-owned write surf
         defaultBranch: "main",
         workspaceRoot: "./worktrees",
         stateFile: "./state.json",
-        codexBinary: process.execPath,
+        executorBinary: process.execPath,
         branchPrefix: "codex/issue-",
         reviewBotLogins: ["chatgpt-codex-connector"],
         experimentalFlag: true,
@@ -3081,7 +3090,7 @@ test("updateSetupConfig restart detection treats trust posture values as exact e
         defaultBranch: "main",
         workspaceRoot: "./worktrees",
         stateFile: "./state.json",
-        codexBinary: process.execPath,
+        executorBinary: process.execPath,
         branchPrefix: "codex/issue-",
         reviewBotLogins: ["chatgpt-codex-connector"],
         trustMode: " untrusted_or_mixed ",
@@ -3135,7 +3144,7 @@ test("updateSetupConfig clears localCiCommand back to the unset state", async (t
         defaultBranch: "main",
         workspaceRoot: path.join(tempDir, "worktrees"),
         stateFile: path.join(tempDir, "state.json"),
-        codexBinary: process.execPath,
+        executorBinary: process.execPath,
         branchPrefix: "codex/issue-",
         reviewBotLogins: ["chatgpt-codex-connector"],
         localCiCommand: "npm run ci:local",
@@ -3221,7 +3230,7 @@ test("updateSetupConfig records an explicit local CI candidate dismissal", async
         defaultBranch: "main",
         workspaceRoot: path.join(tempDir, "worktrees"),
         stateFile: path.join(tempDir, "state.json"),
-        codexBinary: process.execPath,
+        executorBinary: process.execPath,
         branchPrefix: "codex/issue-",
         reviewBotLogins: ["chatgpt-codex-connector"],
       },
@@ -3276,7 +3285,7 @@ test("updateSetupConfig rejects conflicting local CI adoption and dismissal befo
     defaultBranch: "main",
     workspaceRoot: "./worktrees",
     stateFile: "./state.json",
-    codexBinary: process.execPath,
+    executorBinary: process.execPath,
     branchPrefix: "codex/issue-",
     reviewBotLogins: ["chatgpt-codex-connector"],
     experimentalFlag: true,
@@ -3327,7 +3336,7 @@ test("updateSetupConfig reports restart when dismissal resolves a malformed conf
         defaultBranch: "main",
         workspaceRoot: path.join(tempDir, "worktrees"),
         stateFile: path.join(tempDir, "state.json"),
-        codexBinary: process.execPath,
+        executorBinary: process.execPath,
         branchPrefix: "codex/issue-",
         reviewBotLogins: ["chatgpt-codex-connector"],
         localCiCommand: "npm run ci:local",
@@ -3386,7 +3395,7 @@ test("updateSetupConfig rejects invalid setup field values before touching the c
     defaultBranch: "main",
     workspaceRoot: "./worktrees",
     stateFile: "./state.json",
-    codexBinary: "codex",
+    executorBinary: "codex",
     branchPrefix: "codex/issue-",
     reviewBotLogins: [],
     experimentalFlag: true,
@@ -3426,7 +3435,7 @@ test("updateSetupConfig rejects missing repo-relative workspacePreparationComman
     defaultBranch: "main",
     workspaceRoot: path.join(tempDir, "worktrees"),
     stateFile: path.join(tempDir, "state.json"),
-    codexBinary: process.execPath,
+    executorBinary: process.execPath,
     branchPrefix: "codex/issue-",
     reviewBotLogins: [],
     experimentalFlag: true,
@@ -3467,7 +3476,7 @@ test("updateSetupConfig rejects untracked repo-relative workspacePreparationComm
     defaultBranch: "main",
     workspaceRoot: path.join(tempDir, "worktrees"),
     stateFile: path.join(tempDir, "state.json"),
-    codexBinary: process.execPath,
+    executorBinary: process.execPath,
     branchPrefix: "codex/issue-",
     reviewBotLogins: [],
     experimentalFlag: true,
@@ -3512,7 +3521,7 @@ test("updateSetupConfig accepts tracked repo-owned workspacePreparationCommand h
       defaultBranch: "main",
       workspaceRoot: path.join(tempDir, "worktrees"),
       stateFile: path.join(tempDir, "state.json"),
-      codexBinary: process.execPath,
+      executorBinary: process.execPath,
       branchPrefix: "codex/issue-",
       reviewBotLogins: [],
       experimentalFlag: true,
@@ -3556,7 +3565,7 @@ test("updateSetupConfig accepts non-file workspacePreparationCommand probes", as
       defaultBranch: "main",
       workspaceRoot: path.join(tempDir, "worktrees"),
       stateFile: path.join(tempDir, "state.json"),
-      codexBinary: process.execPath,
+      executorBinary: process.execPath,
       branchPrefix: "codex/issue-",
       reviewBotLogins: [],
     }, null, 2),

@@ -48,7 +48,7 @@ test("replay re-runs a saved snapshot through the CLI entry path", async () => {
     workspaceRoot: path.join(tempDir, "workspaces"),
     stateBackend: "json",
     stateFile: path.join(tempDir, "state.json"),
-    codexBinary: "/usr/bin/codex",
+    executorBinary: "/usr/bin/codex",
     reviewBotLogins: ["copilot-pull-request-reviewer"],
     branchPrefix: "codex/reopen-issue-",
   }));
@@ -148,7 +148,7 @@ test("replay-corpus-promote promotes a captured snapshot through the dedicated C
     workspaceRoot: path.join(tempDir, "workspaces"),
     stateBackend: "json",
     stateFile: path.join(tempDir, "state.json"),
-    codexBinary: "/usr/bin/codex",
+    executorBinary: "/usr/bin/codex",
     reviewBotLogins: ["copilot-pull-request-reviewer"],
     branchPrefix: "codex/issue-",
   }));
@@ -354,7 +354,7 @@ test("replay-corpus-promote suggests deterministic case ids when no case id is p
     workspaceRoot: path.join(tempDir, "workspaces"),
     stateBackend: "json",
     stateFile: path.join(tempDir, "state.json"),
-    codexBinary: "/usr/bin/codex",
+    executorBinary: "/usr/bin/codex",
     reviewBotLogins: ["copilot-pull-request-reviewer"],
     branchPrefix: "codex/issue-",
   }));
@@ -640,7 +640,7 @@ test("replay-corpus prints a compact all-pass summary", async () => {
     workspaceRoot: path.join(tempDir, "workspaces"),
     stateBackend: "json",
     stateFile: path.join(tempDir, "state.json"),
-    codexBinary: "/usr/bin/codex",
+    executorBinary: "/usr/bin/codex",
     reviewBotLogins: ["copilot-pull-request-reviewer"],
     branchPrefix: "codex/reopen-issue-",
   }));
@@ -759,7 +759,7 @@ test("replay-corpus prints one compact normalized mismatch line per failing case
     workspaceRoot: path.join(tempDir, "workspaces"),
     stateBackend: "json",
     stateFile: path.join(tempDir, "state.json"),
-    codexBinary: "/usr/bin/codex",
+    executorBinary: "/usr/bin/codex",
     reviewBotLogins: ["copilot-pull-request-reviewer"],
     branchPrefix: "codex/reopen-issue-",
   }));

@@ -282,11 +282,11 @@ test("runVerifierReview routes verifier turns through the injected execution con
 test("runCodexReviewTurn omits bypass flags when execution safety mode is operator gated", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "local-review-runner-test-"));
   const workspacePath = path.join(root, "workspace");
-  const codexBinary = path.join(root, "fake-codex.sh");
+  const executorBinary = path.join(root, "fake-codex.sh");
   const argsPath = path.join(root, "args.log");
   await fs.mkdir(workspacePath, { recursive: true });
   await fs.writeFile(
-    codexBinary,
+    executorBinary,
     `#!/bin/sh
 set -eu
 printf '%s\n' "$@" > "${argsPath}"
@@ -308,11 +308,11 @@ exit 0
 `,
     "utf8",
   );
-  await fs.chmod(codexBinary, 0o755);
+  await fs.chmod(executorBinary, 0o755);
 
   const result = await runCodexReviewTurn({
     config: createConfig({
-      codexBinary,
+      executorBinary,
       executionSafetyMode: "operator_gated",
     }),
     workspacePath,

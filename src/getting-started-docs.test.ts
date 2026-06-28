@@ -93,7 +93,7 @@ test("getting-started defines setup readiness as a typed first-run contract dist
   );
   assert.match(
     content,
-    /type SetupReadinessFieldKey =[\s\S]*"repoPath"[\s\S]*"repoSlug"[\s\S]*"defaultBranch"[\s\S]*"workspaceRoot"[\s\S]*"stateFile"[\s\S]*"codexBinary"[\s\S]*"branchPrefix"[\s\S]*"localCiCommand"[\s\S]*"reviewProvider"/,
+    /type SetupReadinessFieldKey =[\s\S]*"repoPath"[\s\S]*"repoSlug"[\s\S]*"defaultBranch"[\s\S]*"workspaceRoot"[\s\S]*"stateFile"[\s\S]*"executorBinary"[\s\S]*"branchPrefix"[\s\S]*"localCiCommand"[\s\S]*"reviewProvider"/,
   );
   assert.match(content, /localCiContract\?: LocalCiContractSummary/);
   assert.match(content, /releaseReadinessGate: advisory/i);

@@ -11,27 +11,143 @@
  * maintaining zero behavioral change with the existing createCodexAgentRunner.
  */
 
+import { basename } from "node:path";
+import { runCodexTurn } from "../codex";
+import { parseAgentTurnStructuredResult } from "../supervisor/agent-runner";
 import {
-  createCodexAgentRunner,
-  detectCodexCliCapabilities,
-  parseAgentTurnStructuredResult,
-  type CreateCodexAgentRunnerOptions,
-} from "../supervisor/agent-runner";
+  buildCodexFailureContext,
+  classifyFailure,
+  classifyTurnError,
+} from "../supervisor/supervisor-failure-helpers";
+import { CodexPromptBuilder } from "./prompt-builder";
+import { truncatePreservingStartAndEnd } from "../core/utils";
 import type {
   AgentRunner,
+  AgentRunnerCapabilities,
   AgentTurnContext,
   AgentTurnResult,
   AgentTurnStructuredResult,
 } from "../agent-contract";
 import { resolveCodexExecutionPolicy } from "../codex/codex-policy";
 import type { CodexExecutionPolicy } from "../codex/codex-policy";
-import type { Executor, ExecutorCapabilities } from "./types";
+import type { Executor, ExecutorCapabilities, PromptBuilder } from "./types";
 import type {
   SupervisorConfig,
   RunState,
   IssueRunRecord,
   CodexExecutionTarget,
+  FailureContext,
+  FailureKind,
 } from "../core/types";
+
+/**
+ * Options for creating the Codex agent runner.
+ *
+ * Provider-specific overrides exist for test injection; in production only
+ * `config` is supplied. This (and the runner below) live in the Codex executor
+ * so the Codex CLI dependency stays behind the Codex boundary rather than
+ * leaking into the provider-neutral supervisor layer.
+ */
+export interface CreateCodexAgentRunnerOptions {
+  runCodexTurnImpl?: typeof runCodexTurn;
+  classifyFailureImpl?: typeof classifyFailure;
+  buildFailureContextImpl?: typeof buildCodexFailureContext;
+  probeCapabilitiesImpl?: (config?: SupervisorConfig) => AgentRunnerCapabilities;
+  config?: SupervisorConfig;
+  /**
+   * Prompt builder for constructing the supervisor prompt.
+   * Defaults to CodexPromptBuilder (passthrough to buildCodexPrompt).
+   * @since Phase 6
+   */
+  promptBuilder?: PromptBuilder;
+}
+
+export function detectCodexCliCapabilities(
+  config?: Pick<SupervisorConfig, "codexBinary" | "executorKind"> | null,
+): AgentRunnerCapabilities {
+  // An explicit executorKind proves the CLI even when the binary is an alias
+  // (e.g. "/usr/local/bin/cx"); otherwise fall back to the binary name.
+  const binaryName = basename(config?.codexBinary ?? "codex").toLowerCase();
+  const looksLikeCodex = config?.executorKind === "codex" || binaryName.includes("codex");
+
+  return {
+    supportsResume: looksLikeCodex,
+    supportsStructuredResult: looksLikeCodex,
+  };
+}
+
+function buildCodexExitFailureContext(
+  buildFailureContextImpl: typeof buildCodexFailureContext,
+  message: string,
+  stderr: string,
+  stdout: string,
+): FailureContext {
+  return buildFailureContextImpl(
+    "codex",
+    "Codex exited non-zero.",
+    [truncatePreservingStartAndEnd([message, stderr, stdout].filter(Boolean).join("\n"), 2000) ?? "Unknown failure output"],
+  );
+}
+
+export function createCodexAgentRunner(options: CreateCodexAgentRunnerOptions = {}): AgentRunner {
+  const runCodexTurnImpl = options.runCodexTurnImpl ?? runCodexTurn;
+  const classifyFailureImpl = options.classifyFailureImpl ?? classifyFailure;
+  const buildFailureContextImpl = options.buildFailureContextImpl ?? buildCodexFailureContext;
+  const capabilities = (options.probeCapabilitiesImpl ?? detectCodexCliCapabilities)(options.config);
+  const promptBuilder = options.promptBuilder ?? new CodexPromptBuilder();
+
+  return {
+    capabilities,
+    async runTurn(context): Promise<AgentTurnResult> {
+      try {
+        const prompt = promptBuilder.buildPrompt(context);
+        const result = await runCodexTurnImpl(
+          context.config,
+          context.workspacePath,
+          prompt,
+          context.state,
+          context.record,
+          context.kind === "resume" ? context.sessionId : undefined,
+        );
+        const failureKind: FailureKind = result.exitCode === 0 ? null : "codex_exit";
+        const structuredResult = failureKind === null ? parseAgentTurnStructuredResult(result.lastMessage) : null;
+
+        return {
+          exitCode: result.exitCode,
+          sessionId: result.sessionId,
+          supervisorMessage: result.lastMessage,
+          stderr: result.stderr,
+          stdout: result.stdout,
+          structuredResult,
+          failureKind,
+          failureContext:
+            failureKind === null
+              ? null
+              : buildCodexExitFailureContext(
+                  buildFailureContextImpl,
+                  result.lastMessage,
+                  result.stderr,
+                  result.stdout,
+                ),
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.stack ?? error.message : String(error);
+        return {
+          exitCode: 1,
+          sessionId: context.kind === "resume" ? context.sessionId : null,
+          supervisorMessage: "",
+          stderr: message,
+          stdout: "",
+          structuredResult: null,
+          failureKind: classifyTurnError(error, message, classifyFailureImpl),
+          failureContext: buildFailureContextImpl("codex", "Codex turn execution failed.", [
+            truncatePreservingStartAndEnd(message, 2000) ?? "Unknown failure",
+          ]),
+        };
+      }
+    },
+  };
+}
 
 /**
  * Config subset needed for model policy resolution.

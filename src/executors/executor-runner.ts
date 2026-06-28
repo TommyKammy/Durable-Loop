@@ -355,6 +355,15 @@ export function createExecutorAgentRunner(
  * - Extracting the last assistant message from JSON output
  * - Normalizing the result into ExecutorTurnResult
  */
+/**
+ * Generous cap for executor JSON output. Large enough not to truncate normal
+ * turns, but bounded so a runaway CLI cannot exhaust memory. Capture preserves
+ * the start (session events) and end (result / last assistant message), and the
+ * per-line JSON parsers skip the truncation-marker line, so a turn still yields
+ * a usable session id and last message even if its output is truncated.
+ */
+export const EXECUTOR_STDOUT_CAPTURE_LIMIT = 16 * 1024 * 1024;
+
 export async function runExecutorCliCommand(
   binary: string,
   args: string[],
@@ -365,6 +374,8 @@ export async function runExecutorCliCommand(
     sessionId?: string | null;
     /** If true, extract lastMessage from JSON stdout. If false, use stdout directly. */
     parseJsonOutput?: boolean;
+    /** Bounded stdout capture limit (chars). Defaults to EXECUTOR_STDOUT_CAPTURE_LIMIT. */
+    stdoutCaptureLimitBytes?: number;
   },
 ): Promise<ExecutorTurnResult> {
   const result = await runCommand(binary, args, {
@@ -372,7 +383,9 @@ export async function runExecutorCliCommand(
     allowExitCodes: [0, 1],
     env: options.env,
     timeoutMs: options.timeoutMs,
-    stdoutCaptureLimitBytes: null, // Don't truncate JSON output
+    // Bounded (not null) so huge/runaway output cannot exhaust memory; the cap
+    // is generous and capture preserves both ends for the JSON line parsers.
+    stdoutCaptureLimitBytes: options.stdoutCaptureLimitBytes ?? EXECUTOR_STDOUT_CAPTURE_LIMIT,
   });
 
   const parseJson = options.parseJsonOutput ?? true;

@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createExecutorAgentRunner, type ExecutorTurnResult } from "./executor-runner";
+import {
+  createExecutorAgentRunner,
+  runExecutorCliCommand,
+  type ExecutorTurnResult,
+} from "./executor-runner";
 import { GenericPromptBuilder } from "./prompt-builder";
 
 const noopTurn = async (): Promise<ExecutorTurnResult> => ({
@@ -33,4 +37,26 @@ test("createExecutorAgentRunner requires a promptBuilder (no silent Codex defaul
     providerName: "OpenCode",
   });
   assert.ok(true);
+});
+
+test("runExecutorCliCommand bounds stdout capture so runaway output cannot grow unbounded", async () => {
+  const produced = 200_000;
+  const limit = 4_000;
+  const result = await runExecutorCliCommand(
+    process.execPath,
+    ["-e", `process.stdout.write("x".repeat(${produced}))`],
+    {
+      cwd: process.cwd(),
+      timeoutMs: 30_000,
+      parseJsonOutput: false,
+      stdoutCaptureLimitBytes: limit,
+    },
+  );
+
+  assert.equal(result.exitCode, 0);
+  // Bounded well below the produced size (a small margin for the truncation marker).
+  assert.ok(
+    result.stdout.length <= limit + 16,
+    `expected bounded stdout (<= ${limit + 16}), got ${result.stdout.length}`,
+  );
 });

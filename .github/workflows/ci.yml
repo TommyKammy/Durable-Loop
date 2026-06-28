@@ -29,3 +29,17 @@ jobs:
       - run: npm run build
       - run: npm run verify:paths
       - run: npm run verify:subprocess-safety
+
+  # The node:sqlite state-store backend is unavailable on Node < 22, so its tests
+  # skip there and the build job above runs no tests. This dedicated Node 22 job
+  # exercises the SQLite-backend state-store suite so regressions in that
+  # persistence path are caught in CI.
+  sqlite-state-store:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npm run test:sqlite-state-store

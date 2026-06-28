@@ -139,6 +139,25 @@ test("normalizeStateForLoad prefers executor_session_id when both keys are prese
   assert.equal("codex_session_id" in normalized, false);
 });
 
+test("normalizeStateForLoad honors an explicitly-cleared executor_session_id over a lingering legacy key", () => {
+  // Both keys present but the canonical one is explicitly null (deliberately
+  // cleared). The stale legacy value must NOT be resurrected.
+  const record = {
+    ...createRecord(103),
+    executor_session_id: null,
+    codex_session_id: "session-stale",
+  } as unknown as Record<string, unknown>;
+
+  const loaded = normalizeStateForLoad({
+    activeIssueNumber: null,
+    issues: { "103": record },
+  } as unknown as SupervisorStateFile);
+
+  const normalized = loaded.issues["103"] as unknown as Record<string, unknown>;
+  assert.equal(normalized.executor_session_id, null);
+  assert.equal("codex_session_id" in normalized, false);
+});
+
 test("normalizeStateForSave canonicalizes legacy inventory artifact paths", () => {
   const saved = normalizeStateForSave({
     activeIssueNumber: null,

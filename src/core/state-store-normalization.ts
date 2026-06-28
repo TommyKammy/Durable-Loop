@@ -179,7 +179,11 @@ export function normalizeIssueRecord(value: IssueRunRecord): IssueRunRecord {
     copilot_review_timed_out_at: value.copilot_review_timed_out_at ?? null,
     copilot_review_timeout_action: value.copilot_review_timeout_action ?? null,
     copilot_review_timeout_reason: value.copilot_review_timeout_reason ?? null,
-    executor_session_id: value.executor_session_id ?? legacyExecutorSessionId ?? null,
+    // Presence-based, not nullish: an explicitly-cleared canonical key (null)
+    // must win over a lingering legacy key, so only fall back to the legacy key
+    // when the canonical key is entirely absent (a record predating the rename).
+    executor_session_id:
+      "executor_session_id" in value ? value.executor_session_id ?? null : legacyExecutorSessionId ?? null,
     local_review_head_sha: value.local_review_head_sha ?? null,
     local_review_blocker_summary: value.local_review_blocker_summary ?? null,
     local_review_summary_path: value.local_review_summary_path ?? null,

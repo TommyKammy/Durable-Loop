@@ -2,7 +2,7 @@
  * Phase 0: Mock executor for contract tests and development.
  */
 
-import type { AgentTurnContext, AgentTurnResult } from "../supervisor/agent-runner";
+import type { AgentTurnContext, AgentTurnResult } from "../agent-contract";
 import type { Executor, ExecutorCapabilities } from "./types";
 
 export interface MockExecutorOptions {

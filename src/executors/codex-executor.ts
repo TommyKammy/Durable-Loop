@@ -22,7 +22,7 @@ import type {
   AgentTurnContext,
   AgentTurnResult,
   AgentTurnStructuredResult,
-} from "../supervisor/agent-runner";
+} from "../agent-contract";
 import { resolveCodexExecutionPolicy } from "../codex/codex-policy";
 import type { CodexExecutionPolicy } from "../codex/codex-policy";
 import type { Executor, ExecutorCapabilities } from "./types";

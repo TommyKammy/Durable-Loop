@@ -115,9 +115,10 @@ export function createExecutor(
   if (config.executionSafetyMode === "operator_gated" && kind === "claude") {
     throw new Error(
       "executionSafetyMode=operator_gated is not supported with the Claude Code executor: " +
-        "`claude -p` runs non-interactively with no operator approval channel. Use the Codex " +
-        "executor (sandboxed) or the OpenCode executor with an opencode.json ask/deny permission " +
-        "config for operator-gated runs.",
+        "`claude -p` runs non-interactively with no operator approval channel, and a verified " +
+        "non-interactive Claude permission mode has not been confirmed. Use the Codex executor " +
+        "(sandboxed) or the OpenCode executor (which is gated via an injected deny policy) for " +
+        "operator-gated runs.",
     );
   }
 

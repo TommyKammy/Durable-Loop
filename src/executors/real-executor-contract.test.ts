@@ -11,7 +11,11 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { Executor } from "./types";
 import type { AgentTurnResult, StartAgentTurnContext } from "../agent-contract";
-import { buildOpenCodePermissionArgs, type ExecutorTurnResult } from "./executor-runner";
+import {
+  buildOpenCodePermissionArgs,
+  buildOpenCodePermissionEnv,
+  type ExecutorTurnResult,
+} from "./executor-runner";
 import type { GitHubIssue, SupervisorConfig } from "../core/types";
 import { CodexExecutor } from "./codex-executor";
 import { createExecutor } from "./executor";
@@ -278,6 +282,21 @@ describe("CLI arg construction", () => {
       "--dangerously-skip-permissions",
     ]);
     assert.deepEqual(buildOpenCodePermissionArgs({ executionSafetyMode: "operator_gated" }), []);
+  });
+
+  test("buildOpenCodePermissionEnv injects a deny policy only when operator-gated", () => {
+    assert.deepEqual(buildOpenCodePermissionEnv({ executionSafetyMode: "unsandboxed_autonomous" }), {});
+
+    const env = buildOpenCodePermissionEnv({ executionSafetyMode: "operator_gated" });
+    assert.ok(env.OPENCODE_CONFIG_CONTENT, "expected an inline OpenCode config to be injected");
+    const policy = JSON.parse(env.OPENCODE_CONFIG_CONTENT as string) as {
+      permission: Record<string, string>;
+    };
+    // Mutations, shell, network and out-of-workspace access are denied (a static,
+    // non-interactive gate that does not depend on a repo opencode.json).
+    for (const tool of ["edit", "bash", "webfetch", "external_directory"]) {
+      assert.equal(policy.permission[tool], "deny", `${tool} must be denied under operator_gated`);
+    }
   });
 
   test("createExecutor rejects operator_gated for the Claude executor (no non-interactive approval channel)", () => {

@@ -20,22 +20,53 @@ import type { PromptBuilder } from "./types";
 import { parseAgentTurnStructuredResult } from "../supervisor/agent-runner";
 
 /**
+ * Tools denied under `operator_gated` for OpenCode: mutations (`edit`), shell
+ * (`bash`), network (`webfetch`), out-of-workspace access (`external_directory`),
+ * and runaway loops (`doom_loop`). Read/search tools keep OpenCode's permissive
+ * default so the executor can still analyze the repo.
+ */
+const OPENCODE_OPERATOR_GATED_DENIED_TOOLS = ["edit", "bash", "webfetch", "external_directory", "doom_loop"] as const;
+
+/**
+ * Inline OpenCode config injected via `OPENCODE_CONFIG_CONTENT` for
+ * `operator_gated` runs. Verified against opencode 1.17.x with
+ * `opencode debug config`: this overrides the resolved `permission` policy
+ * (inline config is higher precedence than project/global `opencode.json`).
+ */
+export const OPENCODE_OPERATOR_GATED_CONFIG_CONTENT = JSON.stringify({
+  permission: Object.fromEntries(OPENCODE_OPERATOR_GATED_DENIED_TOOLS.map((tool) => [tool, "deny"])),
+});
+
+/**
  * Permission CLI args for the OpenCode executor, gated on the configured
- * execution-safety posture.
- *
- * In `operator_gated` mode the bypass flag is omitted so OpenCode enforces the
- * allow/ask/deny rules from the operator's own `opencode.json` `permission`
- * config (https://opencode.ai/docs/config/); the supervisor cannot inspect that
- * file, so configuring it is the operator's responsibility. In autonomous mode
- * the skip-permissions flag is emitted.
- *
- * NOTE: the exact OpenCode skip-permissions flag name is unverified against the
- * real OpenCode CLI; this only makes the existing flag conditional.
+ * execution-safety posture. `operator_gated` omits the bypass flag (the deny
+ * policy injected via {@link buildOpenCodePermissionEnv} is the actual gate);
+ * autonomous mode emits the skip-permissions flag (verified: `opencode run`
+ * exposes `--dangerously-skip-permissions`, "auto-approve permissions that are
+ * not explicitly denied").
  */
 export function buildOpenCodePermissionArgs(
   config: Pick<SupervisorConfig, "executionSafetyMode">,
 ): string[] {
   return config.executionSafetyMode === "operator_gated" ? [] : ["--dangerously-skip-permissions"];
+}
+
+/**
+ * Environment overrides enforcing the OpenCode permission posture.
+ *
+ * OpenCode's defaults are permissive (most tools default to `allow`), so for
+ * `operator_gated` just dropping the bypass flag still lets the model edit files
+ * and run bash without approval. Inject a restrictive `deny` policy via the
+ * highest-precedence inline config (`OPENCODE_CONFIG_CONTENT`) so the gate holds
+ * even when the repo has no `opencode.json`. `deny` is a static, non-interactive
+ * block — there is no approval prompt to hang a headless `opencode run`.
+ */
+export function buildOpenCodePermissionEnv(
+  config: Pick<SupervisorConfig, "executionSafetyMode">,
+): NodeJS.ProcessEnv {
+  return config.executionSafetyMode === "operator_gated"
+    ? { OPENCODE_CONFIG_CONTENT: OPENCODE_OPERATOR_GATED_CONFIG_CONTENT }
+    : {};
 }
 import { buildCodexFailureContext, classifyFailure, classifyTurnError } from "../supervisor/supervisor-failure-helpers";
 import type {

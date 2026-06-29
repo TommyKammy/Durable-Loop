@@ -33,6 +33,7 @@ import type {
 import { resolveExecutorTurnTimeoutMinutes } from "../core/config-types";
 import {
   buildOpenCodePermissionArgs,
+  buildOpenCodePermissionEnv,
   createExecutorAgentRunner,
   runExecutorCliCommand,
   type ExecutorTurnResult,
@@ -166,6 +167,8 @@ export const runOpenCodeTurn: RunExecutorTurnFn = async (
     env: {
       ...process.env,
       CI: "1",
+      // operator_gated injects a restrictive OPENCODE_CONFIG_CONTENT deny policy.
+      ...buildOpenCodePermissionEnv(config),
     },
   });
 };

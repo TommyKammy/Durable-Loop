@@ -1,10 +1,12 @@
 import {
-  codexConnectorMustFixReviewThreads,
   commitShasEqualForComparison,
-  hasCodexConnectorFindingReviewComment,
   latestCodexConnectorReviewComment,
-  latestCodexConnectorPSeverity,
 } from "./codex-connector-review-policy";
+import {
+  hasProviderFindingReviewComment,
+  mustFixReviewThreads,
+  providerExtractSeverity,
+} from "./review-providers/dispatch";
 import { configuredReviewProviderKinds } from "./core/review-providers";
 import type { GitHubPullRequest, IssueRunRecord, PullRequestCheck, ReviewThread, SupervisorConfig, TimelineArtifact } from "./core/types";
 import { hasCodexConnectorStrongRiskWording } from "./external-review/external-review-normalization";
@@ -62,7 +64,7 @@ function unresolvedConfiguredBotThreadsAreCodexConnectorOnly(
     .every(
       (thread) =>
         latestReviewCommentAuthorIsAllowedBot(config, thread) &&
-        hasCodexConnectorFindingReviewComment(thread),
+        hasProviderFindingReviewComment(config, thread),
     );
 }
 
@@ -205,9 +207,12 @@ function headScopedProcessedThreadEvidenceCount(
   );
 }
 
-function currentRepairResidueThreads(currentThreads: ReviewThread[]): ReviewThread[] | null {
-  const mustFixThreads = codexConnectorMustFixReviewThreads(currentThreads);
-  if (!mustFixThreads.every((thread) => latestCodexConnectorPSeverity(thread) === "P2")) {
+function currentRepairResidueThreads(
+  config: SupervisorConfig,
+  currentThreads: ReviewThread[],
+): ReviewThread[] | null {
+  const mustFixThreads = mustFixReviewThreads(config, currentThreads);
+  if (!mustFixThreads.every((thread) => providerExtractSeverity(config, thread) === "P2")) {
     return null;
   }
   return mustFixThreads;
@@ -239,7 +244,7 @@ function allUnresolvedCodexConnectorMustFixThreadsAreP2(
 ): boolean {
   return unresolvedCodexConnectorMustFixThreads(
     configuredBotReviewThreads(config, reviewThreads),
-  ).every((thread) => latestCodexConnectorPSeverity(thread) === "P2");
+  ).every((thread) => providerExtractSeverity(config, thread) === "P2");
 }
 
 function isCurrentHeadNoMajorMergeGuardFailure(
@@ -358,7 +363,7 @@ export function projectCurrentHeadCodexRepairProof(args: {
   }
 
   const currentThreads = currentConfiguredBotThreads(args.config, args.reviewThreads);
-  const repairResidueThreads = currentRepairResidueThreads(currentThreads);
+  const repairResidueThreads = currentRepairResidueThreads(args.config, currentThreads);
   if (!repairResidueThreads || !allUnresolvedCodexConnectorMustFixThreadsAreP2(args.config, args.reviewThreads)) {
     return null;
   }

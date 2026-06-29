@@ -32,6 +32,7 @@ import {
 } from "../codex-connector-review-churn";
 import { configuredBotReviewThreads, manualReviewThreads } from "../review-thread-reporting";
 import { selectChurnAdapter } from "../review-providers/churn-adapter";
+import { migrateLegacyChurnSnapshotKeys } from "../tracked-pr-progress-snapshot-migration";
 import {
   FailureContext,
   GitHubPullRequest,
@@ -284,30 +285,6 @@ function parseTrackedPrProgressSnapshot(snapshot: string | null | undefined): Tr
     return parsed as TrackedPrProgressSnapshot;
   } catch {
     return null;
-  }
-}
-
-/**
- * Read-time migration: the churn snapshot fields were renamed from the
- * Codex-specific `codexConnector*` names to executor-neutral names. Map the
- * legacy keys embedded in older persisted `progressSnapshot` strings onto the
- * canonical keys (preferring an already-present canonical value) and drop the
- * legacy keys so re-serialization only writes the neutral names.
- */
-function migrateLegacyChurnSnapshotKeys(parsed: Record<string, unknown>): void {
-  const legacyKeyMap: Record<string, keyof TrackedPrProgressSnapshot> = {
-    codexConnectorReviewChurnProgress: "reviewChurnProgress",
-    codexConnectorReviewChurnComparison: "reviewChurnComparison",
-    codexConnectorReviewChurnHistory: "reviewChurnHistory",
-    codexConnectorStableSameFileChurn: "stableSameFileChurn",
-  };
-  for (const [legacyKey, canonicalKey] of Object.entries(legacyKeyMap)) {
-    if (legacyKey in parsed) {
-      if (!(canonicalKey in parsed) && parsed[legacyKey] !== undefined) {
-        parsed[canonicalKey] = parsed[legacyKey];
-      }
-      delete parsed[legacyKey];
-    }
   }
 }
 

@@ -1,4 +1,5 @@
 import type { GitHubPullRequest, IssueRunRecord, ReviewThread, RunState } from "../core/types";
+import { migrateLegacyChurnSnapshotKeys } from "../tracked-pr-progress-snapshot-migration";
 import {
   type CodexConnectorReviewChurnDiagnostic,
   codexConnectorStableSameFileChurnSignature,
@@ -56,7 +57,7 @@ export function buildCodexConnectorStableSameFileChurnDossier(
     };
   };
   try {
-    snapshot = JSON.parse(input.record.last_tracked_pr_progress_snapshot);
+    snapshot = migrateLegacyChurnSnapshotKeys(JSON.parse(input.record.last_tracked_pr_progress_snapshot));
   } catch {
     return [];
   }

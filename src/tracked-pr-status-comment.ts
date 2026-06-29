@@ -1,4 +1,5 @@
 import { GitHubClient } from "./github";
+import { migrateLegacyChurnSnapshotKeys } from "./tracked-pr-progress-snapshot-migration";
 import { IssueJournalSync } from "./run-once-issue-preparation";
 import { StateStore } from "./core/state-store";
 import {
@@ -116,7 +117,7 @@ function parseTrackedPrCodexConnectorChurnSnapshot(
   }
 
   try {
-    const parsed = JSON.parse(snapshot) as {
+    const parsed = migrateLegacyChurnSnapshotKeys(JSON.parse(snapshot)) as {
       headRefOid?: unknown;
       reviewChurnProgress?: Partial<TrackedPrCodexConnectorChurnProgress>;
       reviewChurnComparison?: Partial<TrackedPrCodexConnectorChurnComparison>;

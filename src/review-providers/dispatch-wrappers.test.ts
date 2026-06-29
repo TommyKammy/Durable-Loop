@@ -16,7 +16,11 @@ import {
   selectAdapter,
 } from "./dispatch";
 import { CodexReviewProviderAdapter } from "./codex-review-provider-adapter";
-import { hasCodexConnectorFindingReviewComment } from "../codex-connector-review-policy";
+import {
+  codexConnectorMustFixReviewThreads,
+  hasCodexConnectorFindingReviewComment,
+  latestCodexConnectorPSeverity,
+} from "../codex-connector-review-policy";
 
 function createThread(overrides: Partial<ReviewThread> = {}): ReviewThread {
   return {
@@ -165,6 +169,36 @@ test("providerExtractSeverity with codex config returns P1", () => {
   const thread = createThread();
   const severity = providerExtractSeverity(createCodexConfig(), thread);
   assert.equal(severity, "P1");
+});
+
+test("mustFixReviewThreads / providerExtractSeverity under a codex config are 1:1 with the Codex functions", () => {
+  // Parity guard for the #19 routing in current-head-codex-repair-proof.ts.
+  const codexThread = createThread();
+  const nonCodexThread = createThread({
+    comments: {
+      nodes: [
+        {
+          id: "c1",
+          body: "test",
+          createdAt: "2025-01-01T00:00:00Z",
+          url: "u",
+          author: { login: "random-user", typeName: "User" },
+        },
+      ],
+    },
+  });
+  const threads = [codexThread, nonCodexThread];
+
+  assert.deepEqual(
+    mustFixReviewThreads(createCodexConfig(), threads),
+    codexConnectorMustFixReviewThreads(threads),
+  );
+  for (const thread of threads) {
+    assert.equal(
+      providerExtractSeverity(createCodexConfig(), thread),
+      latestCodexConnectorPSeverity(thread),
+    );
+  }
 });
 
 test("providerExtractSeverity with codex config returns null for non-codex thread", () => {

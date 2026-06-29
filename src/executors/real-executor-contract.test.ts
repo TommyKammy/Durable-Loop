@@ -288,14 +288,15 @@ describe("CLI arg construction", () => {
 
     const env = buildOpenCodePermissionEnv({ executionSafetyMode: "operator_gated" }, undefined);
     assert.ok(env.OPENCODE_CONFIG_CONTENT, "expected an inline OpenCode config to be injected");
-    const policy = (JSON.parse(env.OPENCODE_CONFIG_CONTENT as string) as { permission: Record<string, string> })
+    const policy = (JSON.parse(env.OPENCODE_CONFIG_CONTENT as string) as { permission: Record<string, unknown> })
       .permission;
     // Default-deny wildcard (covers custom/MCP tools) plus explicit dangerous
-    // built-ins; read/search stay allowed so the executor can still analyze.
-    for (const tool of ["*", "edit", "bash", "webfetch", "websearch", "external_directory"]) {
+    // built-ins, including lsp (so language-server commands cannot be spawned).
+    for (const tool of ["*", "edit", "bash", "webfetch", "websearch", "external_directory", "lsp"]) {
       assert.equal(policy[tool], "deny", `${tool} must be denied under operator_gated`);
     }
-    assert.equal(policy.read, "allow");
+    // read stays allowed but keeps OpenCode's default .env denial.
+    assert.deepEqual(policy.read, { "*": "allow", "*.env": "deny", "*.env.*": "deny", "*.env.example": "allow" });
   });
 
   test("buildOpenCodePermissionEnv merges into an existing inline OpenCode config", () => {

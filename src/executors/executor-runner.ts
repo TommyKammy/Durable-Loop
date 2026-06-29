@@ -19,23 +19,31 @@ import type {
 import type { PromptBuilder } from "./types";
 import { parseAgentTurnStructuredResult } from "../supervisor/agent-runner";
 
+type OpenCodePermissionValue = "allow" | "deny" | Record<string, "allow" | "deny">;
+
 /**
  * OpenCode `permission` policy injected under `operator_gated`. Default-deny via
  * the `"*"` wildcard (which also covers custom tools and MCP tools), with the
- * known mutating/network/escape built-ins denied explicitly so an existing
+ * known mutating/network/escape/LSP built-ins denied explicitly so an existing
  * global `opencode.json` `allow` cannot survive the merge, and read/search tools
- * allowed so the executor can still analyze the repo.
+ * allowed so the executor can still analyze the repo. `read` uses OpenCode's
+ * default object policy so workspace `.env` secrets stay denied even though plain
+ * reads are allowed.
  *
- * Verified against opencode 1.17.x with `opencode debug config`: this resolves
- * every dangerous tool to `deny` and the read tools to `allow`.
+ * Verified against opencode 1.17.x with `opencode debug config`: every dangerous
+ * tool resolves to `deny`, `read` keeps the `.env` deny patterns, and `lsp` is
+ * denied (so configured language-server commands cannot be spawned).
  *
- * KNOWN LIMITATION: agent-level `permission` takes precedence over this top-level
- * policy, so a host/plugin config that forces an agent's `permission` to `allow`
- * (e.g. a global agent plugin) can still weaken the gate. This injection is a
- * best-effort top-level gate, not an absolute guarantee; only the Codex executor
- * (OS sandbox) provides a guaranteed non-interactive gate.
+ * KNOWN LIMITATIONS (env injection cannot fully close these — only the Codex
+ * executor's OS sandbox is a guaranteed non-interactive gate):
+ *  - Agent-level `permission` takes precedence over this top-level policy, so a
+ *    host/plugin that forces an agent's `permission` to `allow` can weaken it.
+ *  - A repo/user custom tool (`.opencode/tools/*`) reusing a built-in name such
+ *    as `read`/`grep`/`glob` takes precedence over the built-in and executes
+ *    arbitrary code; OpenCode exposes no injectable switch to disable custom
+ *    tools, so an allowed name can still be shadowed.
  */
-const OPENCODE_OPERATOR_GATED_PERMISSION: Record<string, "allow" | "deny"> = {
+const OPENCODE_OPERATOR_GATED_PERMISSION: Record<string, OpenCodePermissionValue> = {
   "*": "deny",
   edit: "deny",
   bash: "deny",
@@ -45,11 +53,13 @@ const OPENCODE_OPERATOR_GATED_PERMISSION: Record<string, "allow" | "deny"> = {
   external_directory: "deny",
   doom_loop: "deny",
   task: "deny",
-  read: "allow",
+  lsp: "deny",
+  // Allow reads but keep OpenCode's default .env denial so untrusted issue text
+  // cannot exfiltrate workspace secrets through a read.
+  read: { "*": "allow", "*.env": "deny", "*.env.*": "deny", "*.env.example": "allow" },
   grep: "allow",
   glob: "allow",
   list: "allow",
-  lsp: "allow",
 };
 
 /**

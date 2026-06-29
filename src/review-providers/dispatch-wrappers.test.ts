@@ -16,6 +16,7 @@ import {
   selectAdapter,
 } from "./dispatch";
 import { CodexReviewProviderAdapter } from "./codex-review-provider-adapter";
+import { hasCodexConnectorFindingReviewComment } from "../codex-connector-review-policy";
 
 function createThread(overrides: Partial<ReviewThread> = {}): ReviewThread {
   return {
@@ -182,6 +183,31 @@ test("providerExtractSeverity with codex config returns null for non-codex threa
 test("hasProviderFindingReviewComment with codex config returns true for codex thread", () => {
   const thread = createThread();
   assert.equal(hasProviderFindingReviewComment(createCodexConfig(), thread), true);
+});
+
+test("hasProviderFindingReviewComment under a codex config is 1:1 with hasCodexConnectorFindingReviewComment", () => {
+  // Parity guard for the #19 routing: call sites switched from the direct Codex
+  // function to the neutral wrapper must behave identically under a codex config.
+  const codexThread = createThread();
+  const nonCodexThread = createThread({
+    comments: {
+      nodes: [
+        {
+          id: "c1",
+          body: "test",
+          createdAt: "2025-01-01T00:00:00Z",
+          url: "u",
+          author: { login: "random-user", typeName: "User" },
+        },
+      ],
+    },
+  });
+  for (const thread of [codexThread, nonCodexThread]) {
+    assert.equal(
+      hasProviderFindingReviewComment(createCodexConfig(), thread),
+      hasCodexConnectorFindingReviewComment(thread),
+    );
+  }
 });
 
 test("hasProviderFindingReviewComment with codex config returns false for non-codex thread", () => {

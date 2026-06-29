@@ -1,6 +1,5 @@
 import {
   evaluateCodexConnectorConvergencePolicy,
-  hasCodexConnectorFindingReviewComment,
   hasCodexConnectorPrSuccessCurrentHeadObservation,
 } from "./codex-connector-review-policy";
 import {
@@ -9,6 +8,7 @@ import {
   latestReviewCommentAuthorIsAllowedBot,
   manualReviewThreads,
 } from "./review-thread-reporting";
+import { hasProviderFindingReviewComment } from "./review-providers/dispatch";
 import {
   conversationResolutionEvidenceContradictsBlocker,
   conversationResolutionEvidenceDetails,
@@ -90,7 +90,7 @@ function isClearableConversationResolutionResidueThread(
     return true;
   }
 
-  return hasCodexConnectorPrSuccessCurrentHeadObservation(pr) && hasCodexConnectorFindingReviewComment(thread);
+  return hasCodexConnectorPrSuccessCurrentHeadObservation(pr) && hasProviderFindingReviewComment(config, thread);
 }
 
 export function buildConversationResolutionBlockerDiagnostic(args: {

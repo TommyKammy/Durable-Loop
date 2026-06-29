@@ -1,4 +1,5 @@
 import { configuredReviewProviderKinds } from "../core/review-providers";
+import { migrateLegacyChurnSnapshotKeys } from "../tracked-pr-progress-snapshot-migration";
 import { displayLocalCiCommand } from "../core/config-parsing";
 import { GitHubPullRequest, IssueRunRecord, PullRequestCheck, ReviewThread, SupervisorConfig } from "../core/types";
 import { currentHeadLocalCiMissing, hasConfiguredLocalCiCommand } from "../local-ci-policy";
@@ -94,9 +95,9 @@ function parsePreviousCodexConnectorReviewChurnProgress(
   }
 
   try {
-    const parsed = JSON.parse(snapshot) as { codexConnectorReviewChurnProgress?: unknown };
-    return isCodexConnectorReviewChurnProgressSummary(parsed.codexConnectorReviewChurnProgress)
-      ? parsed.codexConnectorReviewChurnProgress
+    const parsed = migrateLegacyChurnSnapshotKeys(JSON.parse(snapshot)) as { reviewChurnProgress?: unknown };
+    return isCodexConnectorReviewChurnProgressSummary(parsed.reviewChurnProgress)
+      ? parsed.reviewChurnProgress
       : null;
   } catch {
     return null;
@@ -130,10 +131,10 @@ function parsePreviousCodexConnectorReviewChurnHistory(
   }
 
   try {
-    const parsed = JSON.parse(snapshot) as { codexConnectorReviewChurnHistory?: unknown };
-    return Array.isArray(parsed.codexConnectorReviewChurnHistory) &&
-      parsed.codexConnectorReviewChurnHistory.every(isCodexConnectorReviewChurnHistoryEntry)
-      ? parsed.codexConnectorReviewChurnHistory
+    const parsed = migrateLegacyChurnSnapshotKeys(JSON.parse(snapshot)) as { reviewChurnHistory?: unknown };
+    return Array.isArray(parsed.reviewChurnHistory) &&
+      parsed.reviewChurnHistory.every(isCodexConnectorReviewChurnHistoryEntry)
+      ? parsed.reviewChurnHistory
       : null;
   } catch {
     return null;

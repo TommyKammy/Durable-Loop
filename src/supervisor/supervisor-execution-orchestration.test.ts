@@ -1176,7 +1176,7 @@ test("runOnce blocks non-decreasing reviewed Codex Connector churn before anothe
           processedReviewThreadIds: [],
           processedReviewThreadFingerprints: [],
           verificationProbeOutcomes: [],
-          codexConnectorReviewChurnProgress: {
+          reviewChurnProgress: {
             currentHeadSha: "head-previous-1390",
             currentEffectiveMustFixCount: 4,
             dominantFile: "src/release-readiness.ts",
@@ -1184,7 +1184,7 @@ test("runOnce blocks non-decreasing reviewed Codex Connector churn before anothe
             clusterCategorySignature: "claim_detection+excluded_scope+readiness_claim+truth_source+verifier_or_issue_lint",
             representativeThreadIds: ["thread-previous-0", "thread-previous-1", "thread-previous-2", "thread-previous-3"],
           },
-          codexConnectorStableSameFileChurn: {
+          stableSameFileChurn: {
             streak: 2,
             dominantFile: "src/release-readiness.ts",
             clusterCategorySignature:

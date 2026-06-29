@@ -633,7 +633,7 @@ test("status compares Codex Connector churn progress against the previous tracke
           configuredBotTopLevelReviewSubmittedAt: "2026-06-01T06:09:54Z",
           checks: ["build:pass:SUCCESS:CI"],
           unresolvedReviewThreadIds: ["thread-previous-0", "thread-previous-1", "thread-previous-2", "thread-previous-3"],
-          codexConnectorReviewChurnProgress: {
+          reviewChurnProgress: {
             currentHeadSha: "head-previous-1391",
             currentEffectiveMustFixCount: 4,
             dominantFile: "src/release-readiness.ts",
@@ -758,7 +758,7 @@ test("status reports stable same-file Codex Connector churn history", async (t) 
           configuredBotTopLevelReviewSubmittedAt: "2026-06-04T06:19:54Z",
           checks: ["build:pass:SUCCESS:CI"],
           unresolvedReviewThreadIds: ["thread-middle-0", "thread-middle-1", "thread-middle-2", "thread-middle-3"],
-          codexConnectorReviewChurnProgress: {
+          reviewChurnProgress: {
             currentHeadSha: "head-middle-2249",
             currentEffectiveMustFixCount: 4,
             dominantFile: "src/release-readiness.ts",
@@ -766,7 +766,7 @@ test("status reports stable same-file Codex Connector churn history", async (t) 
             clusterCategorySignature: "claim_detection+excluded_scope+readiness_claim+truth_source+verifier_or_issue_lint",
             representativeThreadIds: ["thread-middle-0", "thread-middle-1", "thread-middle-2", "thread-middle-3"],
           },
-          codexConnectorReviewChurnHistory: [
+          reviewChurnHistory: [
             {
               reviewedHeadSha: "head-previous-2249",
               effectiveMustFixCount: 4,

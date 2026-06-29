@@ -2807,7 +2807,7 @@ test("reconcileRecoverableBlockedIssueStates preserves Codex Connector manual-re
     processedReviewThreadIds: [],
     processedReviewThreadFingerprints: [],
     verificationProbeOutcomes: [],
-    codexConnectorReviewChurnProgress: {
+    reviewChurnProgress: {
       currentHeadSha: "head-previous-366",
       currentEffectiveMustFixCount: 4,
       dominantFile: "src/release-readiness.ts",
@@ -3048,7 +3048,7 @@ test("reconcileRecoverableBlockedIssueStates leaves already-preserved same-head 
     checks: ["build:pass:SUCCESS:CI"],
     unresolvedReviewThreadIds: ["thread-authority"],
     unresolvedReviewThreadFingerprints: ["thread-authority#comment-authority"],
-    codexConnectorReviewChurnProgress: {
+    reviewChurnProgress: {
       currentHeadSha: "head-current-366",
       currentEffectiveMustFixCount: 1,
       dominantFile: "src/release-readiness.ts",
@@ -3183,7 +3183,7 @@ test("reconcileRecoverableBlockedIssueStates ignores human replies when comparin
     checks: ["build:pass:SUCCESS:CI"],
     unresolvedReviewThreadIds: ["thread-authority"],
     unresolvedReviewThreadFingerprints: ["thread-authority#comment-authority"],
-    codexConnectorReviewChurnProgress: {
+    reviewChurnProgress: {
       currentHeadSha: "head-current-366",
       currentEffectiveMustFixCount: 1,
       dominantFile: "src/release-readiness.ts",
@@ -3295,7 +3295,7 @@ test("reconcileRecoverableBlockedIssueStates ignores outdated Codex Connector re
       "thread-stale-codex#comment-stale-codex",
       "thread-human#comment-human",
     ],
-    codexConnectorReviewChurnProgress: {
+    reviewChurnProgress: {
       currentHeadSha: "head-previous-366",
       currentEffectiveMustFixCount: 1,
       dominantFile: "src/release-readiness.ts",
@@ -3440,7 +3440,7 @@ test("reconcileRecoverableBlockedIssueStates does not preserve churn blocks for 
     checks: ["build:pass:SUCCESS:CI"],
     unresolvedReviewThreadIds: ["thread-nitpick"],
     unresolvedReviewThreadFingerprints: ["thread-nitpick#comment-nitpick"],
-    codexConnectorReviewChurnProgress: {
+    reviewChurnProgress: {
       currentHeadSha: "head-previous-366",
       currentEffectiveMustFixCount: 1,
       dominantFile: "src/release-readiness.ts",
@@ -3547,7 +3547,7 @@ test("reconcileRecoverableBlockedIssueStates does not preserve Codex Connector c
     checks: ["build:pass:SUCCESS:CI"],
     unresolvedReviewThreadIds: ["thread-old-codex"],
     unresolvedReviewThreadFingerprints: ["thread-old-codex#comment-old-codex"],
-    codexConnectorReviewChurnProgress: {
+    reviewChurnProgress: {
       currentHeadSha: "head-previous-366",
       currentEffectiveMustFixCount: 1,
       dominantFile: "src/release-readiness.ts",
@@ -3657,7 +3657,7 @@ test("reconcileRecoverableBlockedIssueStates lets same-head churn blocks recover
     checks: ["build:pass:SUCCESS:CI"],
     unresolvedReviewThreadIds: ["thread-authority"],
     unresolvedReviewThreadFingerprints: ["thread-authority#comment-authority"],
-    codexConnectorReviewChurnProgress: {
+    reviewChurnProgress: {
       currentHeadSha: "head-current-366",
       currentEffectiveMustFixCount: 1,
       dominantFile: "src/release-readiness.ts",

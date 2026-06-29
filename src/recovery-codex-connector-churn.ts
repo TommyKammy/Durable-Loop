@@ -1,4 +1,5 @@
 import { buildCodexConnectorReviewChurnDiagnostic, buildCodexConnectorReviewChurnProgressSummary } from "./codex-connector-review-churn";
+import { migrateLegacyChurnSnapshotKeys } from "./tracked-pr-progress-snapshot-migration";
 import {
   codexConnectorMustFixReviewThreads,
   latestCodexConnectorReviewCommentFingerprint,
@@ -43,8 +44,8 @@ export function codexConnectorChurnStopEvidenceSource(
 
   if (record.last_tracked_pr_progress_snapshot) {
     try {
-      const parsed = JSON.parse(record.last_tracked_pr_progress_snapshot);
-      if (parsed?.codexConnectorReviewChurnProgress !== undefined) {
+      const parsed = migrateLegacyChurnSnapshotKeys(JSON.parse(record.last_tracked_pr_progress_snapshot));
+      if (parsed?.reviewChurnProgress !== undefined) {
         return "snapshot";
       }
     } catch {
@@ -88,7 +89,7 @@ function parseProgressSnapshotStringArray(
   }
 
   try {
-    const parsed = JSON.parse(snapshot);
+    const parsed = migrateLegacyChurnSnapshotKeys(JSON.parse(snapshot));
     return Array.isArray(parsed?.[key])
       ? parsed[key]
         .filter((value: unknown): value is string => typeof value === "string")
@@ -194,7 +195,7 @@ export function buildPreservedCodexConnectorChurnProgressSnapshot(args: {
           `${artifact.gate}:${artifact.command ?? "none"}:${artifact.outcome}:${artifact.remediation_target ?? "none"}`,
       )
       .sort(),
-    codexConnectorReviewChurnProgress: churnDiagnostic
+    reviewChurnProgress: churnDiagnostic
       ? buildCodexConnectorReviewChurnProgressSummary(churnDiagnostic, args.pr.headRefOid)
       : {
           currentHeadSha: args.pr.headRefOid,

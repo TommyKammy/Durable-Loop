@@ -1,4 +1,5 @@
 import { GitHubClient } from "./github";
+import { migrateLegacyChurnSnapshotKeys } from "./tracked-pr-progress-snapshot-migration";
 import { IssueJournalSync } from "./run-once-issue-preparation";
 import { StateStore } from "./core/state-store";
 import {
@@ -116,12 +117,12 @@ function parseTrackedPrCodexConnectorChurnSnapshot(
   }
 
   try {
-    const parsed = JSON.parse(snapshot) as {
+    const parsed = migrateLegacyChurnSnapshotKeys(JSON.parse(snapshot)) as {
       headRefOid?: unknown;
-      codexConnectorReviewChurnProgress?: Partial<TrackedPrCodexConnectorChurnProgress>;
-      codexConnectorReviewChurnComparison?: Partial<TrackedPrCodexConnectorChurnComparison>;
+      reviewChurnProgress?: Partial<TrackedPrCodexConnectorChurnProgress>;
+      reviewChurnComparison?: Partial<TrackedPrCodexConnectorChurnComparison>;
     };
-    const progress = parsed.codexConnectorReviewChurnProgress;
+    const progress = parsed.reviewChurnProgress;
     if (
       !progress ||
       typeof progress.currentEffectiveMustFixCount !== "number" ||
@@ -140,9 +141,9 @@ function parseTrackedPrCodexConnectorChurnSnapshot(
         ? progress.currentHeadSha
         : null;
     const comparison =
-      parsed.codexConnectorReviewChurnComparison?.classification === "unchanged" ||
-      parsed.codexConnectorReviewChurnComparison?.classification === "worse"
-        ? { classification: parsed.codexConnectorReviewChurnComparison.classification }
+      parsed.reviewChurnComparison?.classification === "unchanged" ||
+      parsed.reviewChurnComparison?.classification === "worse"
+        ? { classification: parsed.reviewChurnComparison.classification }
         : null;
     return {
       snapshotHeadSha,

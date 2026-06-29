@@ -7,6 +7,7 @@ import {
   type SupervisorConfig,
   type SupervisorStateFile,
 } from "./core/types";
+import { migrateLegacyChurnSnapshotKeys } from "./tracked-pr-progress-snapshot-migration";
 import { type StateStore } from "./core/state-store";
 import { type RecoveryEvent } from "./run-once-cycle-prelude";
 import {
@@ -110,7 +111,7 @@ function parseTrackedPrProgressSnapshotThreadIds(
   }
 
   try {
-    const parsed = JSON.parse(snapshot);
+    const parsed = migrateLegacyChurnSnapshotKeys(JSON.parse(snapshot));
     return Array.isArray(parsed?.unresolvedReviewThreadIds)
       ? parsed.unresolvedReviewThreadIds
         .filter((threadId: unknown): threadId is string => typeof threadId === "string")
@@ -129,7 +130,7 @@ function parseTrackedPrProgressSnapshotThreadFingerprints(
   }
 
   try {
-    const parsed = JSON.parse(snapshot);
+    const parsed = migrateLegacyChurnSnapshotKeys(JSON.parse(snapshot));
     return Array.isArray(parsed?.unresolvedReviewThreadFingerprints)
       ? parsed.unresolvedReviewThreadFingerprints
         .filter((fingerprint: unknown): fingerprint is string => typeof fingerprint === "string")

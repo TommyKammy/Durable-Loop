@@ -730,7 +730,7 @@ test("determineTrackedPrRepeatFailureDisposition stops no-progress clustered Cod
       processedReviewThreadIds: [],
       processedReviewThreadFingerprints: [],
       verificationProbeOutcomes: [],
-      codexConnectorReviewChurnProgress: {
+      reviewChurnProgress: {
         currentHeadSha: "head-previous-366",
         currentEffectiveMustFixCount: 4,
         dominantFile: "src/release-readiness.ts",
@@ -825,7 +825,7 @@ test("determineTrackedPrRepeatFailureDisposition stops non-decreasing reviewed C
       processedReviewThreadIds: [],
       processedReviewThreadFingerprints: [],
       verificationProbeOutcomes: [],
-      codexConnectorReviewChurnProgress: {
+      reviewChurnProgress: {
         currentHeadSha: "head-previous-1390",
         currentEffectiveMustFixCount: 4,
         dominantFile: "src/release-readiness.ts",
@@ -833,7 +833,7 @@ test("determineTrackedPrRepeatFailureDisposition stops non-decreasing reviewed C
         clusterCategorySignature: "claim_detection+excluded_scope+readiness_claim+truth_source+verifier_or_issue_lint",
         representativeThreadIds: ["thread-previous-0", "thread-previous-1", "thread-previous-2", "thread-previous-3"],
       },
-      codexConnectorStableSameFileChurn: {
+      stableSameFileChurn: {
         streak: 2,
         dominantFile: "src/release-readiness.ts",
         clusterCategorySignature: "claim_detection+excluded_scope+readiness_claim+truth_source+verifier_or_issue_lint",
@@ -929,7 +929,7 @@ test("determineTrackedPrRepeatFailureDisposition keeps same reviewed Codex churn
       processedReviewThreadIds: [],
       processedReviewThreadFingerprints: [],
       verificationProbeOutcomes: [],
-      codexConnectorReviewChurnProgress: {
+      reviewChurnProgress: {
         currentHeadSha: "head-previous-1391",
         currentEffectiveMustFixCount: 4,
         dominantFile: "src/release-readiness.ts",
@@ -937,7 +937,7 @@ test("determineTrackedPrRepeatFailureDisposition keeps same reviewed Codex churn
         clusterCategorySignature: "claim_detection+excluded_scope+readiness_claim+truth_source+verifier_or_issue_lint",
         representativeThreadIds: ["thread-previous-0", "thread-previous-1", "thread-previous-2", "thread-previous-3"],
       },
-      codexConnectorStableSameFileChurn: {
+      stableSameFileChurn: {
         streak: 2,
         dominantFile: "src/release-readiness.ts",
         clusterCategorySignature: "claim_detection+excluded_scope+readiness_claim+truth_source+verifier_or_issue_lint",
@@ -1032,7 +1032,7 @@ test("determineTrackedPrRepeatFailureDisposition keeps changed clustered Codex c
       processedReviewThreadIds: [],
       processedReviewThreadFingerprints: [],
       verificationProbeOutcomes: [],
-      codexConnectorReviewChurnProgress: {
+      reviewChurnProgress: {
         currentHeadSha: "head-previous-366",
         currentEffectiveMustFixCount: 4,
         dominantFile: "src/release-readiness.ts",
@@ -1125,7 +1125,7 @@ test("determineTrackedPrRepeatFailureDisposition keeps improving clustered Codex
       processedReviewThreadIds: [],
       processedReviewThreadFingerprints: [],
       verificationProbeOutcomes: [],
-      codexConnectorReviewChurnProgress: {
+      reviewChurnProgress: {
         currentHeadSha: "head-previous-366",
         currentEffectiveMustFixCount: 4,
         dominantFile: "src/release-readiness.ts",
@@ -1215,7 +1215,7 @@ test("summarizeTrackedPrProgress records stable same-file Codex Connector churn 
       processedReviewThreadIds: [],
       processedReviewThreadFingerprints: [],
       verificationProbeOutcomes: [],
-      codexConnectorReviewChurnProgress: {
+      reviewChurnProgress: {
         currentHeadSha: "head-middle-366",
         currentEffectiveMustFixCount: 4,
         dominantFile: "src/release-readiness.ts",
@@ -1223,7 +1223,7 @@ test("summarizeTrackedPrProgress records stable same-file Codex Connector churn 
         clusterCategorySignature: "claim_detection+excluded_scope+readiness_claim+truth_source+verifier_or_issue_lint",
         representativeThreadIds: ["thread-middle-0", "thread-middle-1", "thread-middle-2", "thread-middle-3"],
       },
-      codexConnectorReviewChurnHistory: [
+      reviewChurnHistory: [
         {
           reviewedHeadSha: "head-previous-366",
           effectiveMustFixCount: 4,
@@ -1284,16 +1284,45 @@ test("summarizeTrackedPrProgress records stable same-file Codex Connector churn 
   const snapshot = JSON.parse(result.snapshot);
 
   assert.deepEqual(
-    snapshot.codexConnectorReviewChurnHistory.map((entry: { reviewedHeadSha: string }) => entry.reviewedHeadSha),
+    snapshot.reviewChurnHistory.map((entry: { reviewedHeadSha: string }) => entry.reviewedHeadSha),
     ["head-previous-366", "head-middle-366", "head-current-366"],
   );
-  assert.equal(snapshot.codexConnectorStableSameFileChurn.streak, 3);
-  assert.equal(snapshot.codexConnectorStableSameFileChurn.dominantFile, "src/release-readiness.ts");
+  assert.equal(snapshot.stableSameFileChurn.streak, 3);
+  assert.equal(snapshot.stableSameFileChurn.dominantFile, "src/release-readiness.ts");
   assert.equal(
-    snapshot.codexConnectorStableSameFileChurn.clusterCategorySignature,
+    snapshot.stableSameFileChurn.clusterCategorySignature,
     "claim_detection+excluded_scope+readiness_claim+truth_source+verifier_or_issue_lint",
   );
-  assert.equal(snapshot.codexConnectorStableSameFileChurn.currentEffectiveMustFixCount, 4);
+  assert.equal(snapshot.stableSameFileChurn.currentEffectiveMustFixCount, 4);
+});
+
+test("parseTrackedPrProgressSnapshot migrates a legacy codexConnector* churn key to the neutral name", () => {
+  // Older persisted progressSnapshot strings used the Codex-specific key name.
+  // The read-time migration maps it to the neutral key so the churn signature is
+  // still derived after the rename.
+  const record = createRecord({
+    last_tracked_pr_progress_snapshot: JSON.stringify({
+      headRefOid: "head-current-2250",
+      reviewDecision: "CHANGES_REQUESTED",
+      mergeStateStatus: "BLOCKED",
+      checks: [],
+      unresolvedReviewThreadIds: ["thread-current-0", "thread-current-1"],
+      codexConnectorStableSameFileChurn: {
+        streak: 3,
+        dominantFile: "src/release-readiness.ts",
+        clusterCategorySignature: "claim_detection+truth_source",
+        currentEffectiveMustFixCount: 4,
+        reviewedHeadShas: ["head-previous-2250", "head-middle-2250", "head-current-2250"],
+        representativeThreadIds: ["thread-current-0", "thread-current-1"],
+      },
+    }),
+    codex_connector_stable_churn_dossier_consumed_signature: null,
+  });
+
+  assert.equal(
+    unconsumedStableSameFileCodexConnectorChurnDossierSignature(record),
+    "codex-connector-stable-same-file-churn:src/release-readiness.ts:claim_detection_truth_source:head-previous-2250_head-middle-2250_head-current-2250",
+  );
 });
 
 test("stable same-file Codex Connector churn dossier consumption is once per signature", () => {
@@ -1304,7 +1333,7 @@ test("stable same-file Codex Connector churn dossier consumption is once per sig
       mergeStateStatus: "BLOCKED",
       checks: [],
       unresolvedReviewThreadIds: ["thread-current-0", "thread-current-1"],
-      codexConnectorStableSameFileChurn: {
+      stableSameFileChurn: {
         streak: 3,
         dominantFile: "src/release-readiness.ts",
         clusterCategorySignature: "claim_detection+truth_source",
@@ -1341,7 +1370,7 @@ test("stable same-file Codex Connector churn dossier consumption is once per sig
       mergeStateStatus: "BLOCKED",
       checks: [],
       unresolvedReviewThreadIds: ["thread-next-0", "thread-next-1"],
-      codexConnectorStableSameFileChurn: {
+      stableSameFileChurn: {
         streak: 3,
         dominantFile: "src/release-readiness.ts",
         clusterCategorySignature: "claim_detection+truth_source",
@@ -1390,7 +1419,7 @@ test("summarizeTrackedPrProgress resets same-file Codex Connector churn history 
       processedReviewThreadIds: [],
       processedReviewThreadFingerprints: [],
       verificationProbeOutcomes: [],
-      codexConnectorReviewChurnProgress: {
+      reviewChurnProgress: {
         currentHeadSha: "head-previous-366",
         currentEffectiveMustFixCount: 4,
         dominantFile: "src/release-readiness.ts",
@@ -1398,7 +1427,7 @@ test("summarizeTrackedPrProgress resets same-file Codex Connector churn history 
         clusterCategorySignature: "readiness_claim+truth_source",
         representativeThreadIds: ["thread-previous-0", "thread-previous-1", "thread-previous-2", "thread-previous-3"],
       },
-      codexConnectorReviewChurnHistory: [
+      reviewChurnHistory: [
         {
           reviewedHeadSha: "head-previous-366",
           effectiveMustFixCount: 4,
@@ -1466,12 +1495,12 @@ test("summarizeTrackedPrProgress resets same-file Codex Connector churn history 
     makeThread("thread-improved-1", "src/release-readiness.ts", "P2: Block release readiness truth-source claims."),
   ]);
 
-  assert.equal(changedFile.codexConnectorReviewChurnHistory.length, 1);
-  assert.equal(changedFile.codexConnectorStableSameFileChurn, undefined);
-  assert.equal(changedCategory.codexConnectorReviewChurnHistory.length, 1);
-  assert.equal(changedCategory.codexConnectorStableSameFileChurn, undefined);
-  assert.equal(improvedCount.codexConnectorReviewChurnHistory.length, 1);
-  assert.equal(improvedCount.codexConnectorStableSameFileChurn, undefined);
+  assert.equal(changedFile.reviewChurnHistory.length, 1);
+  assert.equal(changedFile.stableSameFileChurn, undefined);
+  assert.equal(changedCategory.reviewChurnHistory.length, 1);
+  assert.equal(changedCategory.stableSameFileChurn, undefined);
+  assert.equal(improvedCount.reviewChurnHistory.length, 1);
+  assert.equal(improvedCount.stableSameFileChurn, undefined);
 });
 
 test("summarizeTrackedPrProgress treats updated same-thread guidance as tracked PR progress", () => {

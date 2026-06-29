@@ -1,4 +1,5 @@
 import type { GitHubPullRequest, IssueRunRecord, ReviewThread, RunState } from "../core/types";
+import { migrateLegacyChurnSnapshotKeys } from "../tracked-pr-progress-snapshot-migration";
 import {
   type CodexConnectorReviewChurnDiagnostic,
   codexConnectorStableSameFileChurnSignature,
@@ -41,12 +42,12 @@ export function buildCodexConnectorStableSameFileChurnDossier(
   }
 
   let snapshot: {
-    codexConnectorReviewChurnHistory?: Array<{
+    reviewChurnHistory?: Array<{
       reviewedHeadSha: string;
       effectiveMustFixCount: number;
       clusterCategorySignature: string;
     }>;
-    codexConnectorStableSameFileChurn?: {
+    stableSameFileChurn?: {
       streak: number;
       dominantFile: string;
       clusterCategorySignature: string;
@@ -56,12 +57,12 @@ export function buildCodexConnectorStableSameFileChurnDossier(
     };
   };
   try {
-    snapshot = JSON.parse(input.record.last_tracked_pr_progress_snapshot);
+    snapshot = migrateLegacyChurnSnapshotKeys(JSON.parse(input.record.last_tracked_pr_progress_snapshot));
   } catch {
     return [];
   }
 
-  const stable = snapshot.codexConnectorStableSameFileChurn;
+  const stable = snapshot.stableSameFileChurn;
   if (!isCodexConnectorStableSameFileChurn(stable)) {
     return [];
   }
@@ -71,7 +72,7 @@ export function buildCodexConnectorStableSameFileChurnDossier(
     return [];
   }
 
-  const history = (snapshot.codexConnectorReviewChurnHistory ?? []).filter((entry) =>
+  const history = (snapshot.reviewChurnHistory ?? []).filter((entry) =>
     stable.reviewedHeadShas.includes(entry.reviewedHeadSha),
   );
   const representativeSourceUrls = uniqueNonEmpty(

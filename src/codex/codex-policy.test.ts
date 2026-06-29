@@ -126,7 +126,7 @@ test("resolveCodexExecutionPolicy escalates only an unconsumed stable Codex Conn
     headRefOid: "head-current-2250",
     checks: [],
     unresolvedReviewThreadIds: [],
-    codexConnectorStableSameFileChurn: {
+    stableSameFileChurn: {
       streak: 3,
       dominantFile: "src/release-readiness.ts",
       clusterCategorySignature: "claim_detection+truth_source",

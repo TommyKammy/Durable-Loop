@@ -1,4 +1,5 @@
 import { CodexExecutionTarget, IssueRunRecord, ReasoningEffort, RunState, SupervisorConfig } from "../core/types";
+import { migrateLegacyChurnSnapshotKeys } from "../tracked-pr-progress-snapshot-migration";
 import {
   codexConnectorStableSameFileChurnSignature,
   isCodexConnectorStableSameFileChurn,
@@ -55,10 +56,10 @@ function activeStableSameFileChurnDossierSignature(
   }
 
   try {
-    const parsed = JSON.parse(record.last_tracked_pr_progress_snapshot) as {
-      codexConnectorStableSameFileChurn?: unknown;
+    const parsed = migrateLegacyChurnSnapshotKeys(JSON.parse(record.last_tracked_pr_progress_snapshot)) as {
+      stableSameFileChurn?: unknown;
     };
-    const stable = parsed.codexConnectorStableSameFileChurn;
+    const stable = parsed.stableSameFileChurn;
     if (!isCodexConnectorStableSameFileChurn(stable)) {
       return null;
     }

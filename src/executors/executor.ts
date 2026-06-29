@@ -106,6 +106,20 @@ export function createExecutor(
   }
 
   const kind = resolveExecutorKind(config);
+
+  // Defense in depth: config-file loading rejects operator_gated for non-Codex
+  // executors, but direct/programmatic callers (new Supervisor(config),
+  // executeCodexTurnPhase) build executors from in-memory configs that bypass
+  // that validation. Fail closed here too so a non-Codex executor can never run
+  // under operator_gated (only the Codex OS sandbox is a guaranteed gate).
+  if (config.executionSafetyMode === "operator_gated" && kind !== "codex") {
+    throw new Error(
+      `executionSafetyMode=operator_gated is only supported with the Codex executor (guaranteed ` +
+        `non-interactive OS sandbox); the ${kind} executor cannot be reliably gated. Use the Codex executor ` +
+        `for operator-gated runs, or executionSafetyMode=unsandboxed_autonomous.`,
+    );
+  }
+
   const overrides = options
     ? {
         classifyFailureImpl: options.classifyFailureImpl,

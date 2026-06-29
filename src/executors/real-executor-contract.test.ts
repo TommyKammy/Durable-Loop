@@ -14,6 +14,7 @@ import type { AgentTurnResult, StartAgentTurnContext } from "../agent-contract";
 import type { ExecutorTurnResult } from "./executor-runner";
 import type { GitHubIssue, SupervisorConfig } from "../core/types";
 import { CodexExecutor } from "./codex-executor";
+import { createExecutor } from "./executor";
 import { OpenCodeExecutor, buildOpenCodeArgs } from "./opencode-executor";
 import { ClaudeCodeExecutor, buildClaudeCodeArgs } from "./claude-code-executor";
 import {
@@ -260,6 +261,24 @@ describe("CLI arg construction", () => {
 
     const fresh = buildClaudeCodeArgs(createConfig(), "/ws", "PROMPT", "implementing");
     assert.equal(fresh.includes("--resume"), false);
+  });
+
+  test("createExecutor fails closed for a non-Codex executor under operator_gated (programmatic path)", () => {
+    // Direct callers (new Supervisor(config), executeCodexTurnPhase) bypass
+    // config-file validation, so construction must also reject the combination.
+    for (const executorBinary of ["/usr/bin/opencode", "/usr/bin/claude"]) {
+      assert.throws(
+        () => createExecutor(createConfig({ executorBinary, executionSafetyMode: "operator_gated" })),
+        /operator_gated is only supported with the Codex executor/,
+      );
+    }
+    // Codex is allowed; non-gated non-Codex executors are unaffected.
+    assert.doesNotThrow(() =>
+      createExecutor(createConfig({ executorBinary: "/usr/bin/codex", executionSafetyMode: "operator_gated" })),
+    );
+    assert.doesNotThrow(() =>
+      createExecutor(createConfig({ executorBinary: "/usr/bin/opencode", executionSafetyMode: "unsandboxed_autonomous" })),
+    );
   });
 
   test("CodexExecutor builds correct CLI args (via the Codex policy builders it delegates to)", () => {

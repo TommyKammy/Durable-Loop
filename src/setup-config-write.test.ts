@@ -74,3 +74,22 @@ test("updateSetupConfig rejects switching a non-Codex config to operator_gated b
     assert.equal("executionSafetyMode" in after, false);
   }
 });
+
+test("updateSetupConfig resolves a relative executorBinary the same way as load before gating", async () => {
+  // A relative binary is resolved relative to the config dir (resolveCommandLikeValue)
+  // before kind inference, matching loadConfig. In a config dir whose path contains
+  // "opencode", a relative `./bin/codex` resolves to an opencode-containing path, so
+  // setup must reject operator_gated here too rather than persist a config the next
+  // load would reject (leaving the service unable to start).
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-runner-"));
+  const configPath = path.join(dir, "supervisor.config.json");
+  await fs.writeFile(configPath, JSON.stringify({ executorBinary: "./bin/codex", repoPath: "/repo" }), "utf8");
+
+  await assert.rejects(
+    updateSetupConfig({
+      configPath,
+      changes: { executionSafetyMode: "operator_gated" } as unknown as SetupConfigChanges,
+    }),
+    /operator_gated is only supported with the Codex executor/,
+  );
+});

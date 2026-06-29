@@ -78,7 +78,7 @@ const VALID_RUN_STATES = new Set<RunState>([
   "failed",
 ]);
 
-function resolveCommandLikeValue(baseDir: string, value: string): string {
+export function resolveCommandLikeValue(baseDir: string, value: string): string {
   if (path.isAbsolute(value)) {
     return value;
   }

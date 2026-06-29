@@ -19,6 +19,27 @@ import type {
 import type { PromptBuilder } from "./types";
 import { parseAgentTurnStructuredResult } from "../supervisor/agent-runner";
 
+/**
+ * Fail closed when a non-Codex executor is asked to run under `operator_gated`.
+ * Only the Codex executor's OS sandbox is a guaranteed non-interactive gate;
+ * OpenCode/Claude enforce permissions via extensible, overridable config that
+ * cannot be reliably gated. Called from the provider constructors and arg
+ * builders so direct/programmatic callers (not just createExecutor and config
+ * loading) also fail closed.
+ */
+export function assertOperatorGatedUnsupported(
+  config: Pick<SupervisorConfig, "executionSafetyMode">,
+  executorLabel: string,
+): void {
+  if (config.executionSafetyMode === "operator_gated") {
+    throw new Error(
+      `executionSafetyMode=operator_gated is only supported with the Codex executor (guaranteed ` +
+        `non-interactive OS sandbox); the ${executorLabel} executor cannot be reliably gated. Use the Codex ` +
+        `executor for operator-gated runs, or executionSafetyMode=unsandboxed_autonomous.`,
+    );
+  }
+}
+
 import { buildCodexFailureContext, classifyFailure, classifyTurnError } from "../supervisor/supervisor-failure-helpers";
 import type {
   AgentRunner,

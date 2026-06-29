@@ -281,6 +281,17 @@ describe("CLI arg construction", () => {
     );
   });
 
+  test("the exported provider constructors and arg builders also fail closed under operator_gated", () => {
+    const opencodeGated = createConfig({ executorBinary: "/usr/bin/opencode", executionSafetyMode: "operator_gated" });
+    const claudeGated = createConfig({ executorBinary: "/usr/bin/claude", executionSafetyMode: "operator_gated" });
+    const re = /operator_gated is only supported with the Codex executor/;
+
+    assert.throws(() => new OpenCodeExecutor({ config: opencodeGated }), re);
+    assert.throws(() => new ClaudeCodeExecutor({ config: claudeGated }), re);
+    assert.throws(() => buildOpenCodeArgs(opencodeGated, "/ws", "PROMPT", "implementing"), re);
+    assert.throws(() => buildClaudeCodeArgs(claudeGated, "/ws", "PROMPT", "implementing"), re);
+  });
+
   test("CodexExecutor builds correct CLI args (via the Codex policy builders it delegates to)", () => {
     const policy = resolveCodexExecutionPolicy(
       createConfig({ codexModelStrategy: "fixed", codexModel: "gpt-5-codex" }),

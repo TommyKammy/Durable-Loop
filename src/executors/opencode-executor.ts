@@ -32,6 +32,7 @@ import type {
 } from "../core/types";
 import { resolveExecutorTurnTimeoutMinutes } from "../core/config-types";
 import {
+  assertOperatorGatedUnsupported,
   createExecutorAgentRunner,
   runExecutorCliCommand,
   type ExecutorTurnResult,
@@ -75,6 +76,7 @@ export function buildOpenCodeArgs(
   state?: RunState,
   sessionId?: string | null,
 ): string[] {
+  assertOperatorGatedUnsupported(config, "opencode");
   const args: string[] = ["run", "--format", "json"];
 
   // Model selection — OpenCode uses provider/model format
@@ -208,6 +210,7 @@ export class OpenCodeExecutor implements Executor {
   private readonly runner: AgentRunner;
 
   constructor(options: OpenCodeExecutorOptions) {
+    assertOperatorGatedUnsupported(options.config, "opencode");
     const baseCaps = (options.probeCapabilitiesImpl ?? detectOpenCodeCapabilities)(
       options.config,
     );

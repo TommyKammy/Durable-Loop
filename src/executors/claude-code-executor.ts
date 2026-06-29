@@ -31,6 +31,7 @@ import type {
 } from "../core/types";
 import { resolveExecutorTurnTimeoutMinutes } from "../core/config-types";
 import {
+  assertOperatorGatedUnsupported,
   createExecutorAgentRunner,
   runExecutorCliCommand,
   type ExecutorTurnResult,
@@ -75,6 +76,7 @@ export function buildClaudeCodeArgs(
   state: RunState,
   sessionId?: string | null,
 ): string[] {
+  assertOperatorGatedUnsupported(config, "claude");
   const args: string[] = ["-p", "--output-format", "json"];
 
   // Model selection
@@ -206,6 +208,7 @@ export class ClaudeCodeExecutor implements Executor {
   private readonly runner: AgentRunner;
 
   constructor(options: ClaudeCodeExecutorOptions) {
+    assertOperatorGatedUnsupported(options.config, "claude");
     const baseCaps = (options.probeCapabilitiesImpl ?? detectClaudeCodeCapabilities)(
       options.config,
     );

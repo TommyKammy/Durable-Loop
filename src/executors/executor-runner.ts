@@ -54,10 +54,12 @@ const OPENCODE_OPERATOR_GATED_PERMISSION: Record<string, OpenCodePermissionValue
   doom_loop: "deny",
   task: "deny",
   lsp: "deny",
+  // grep is denied: unlike `read` it has no `.env` path guard, so it could
+  // search secret-file contents and surface them in turn output.
+  grep: "deny",
   // Allow reads but keep OpenCode's default .env denial so untrusted issue text
   // cannot exfiltrate workspace secrets through a read.
   read: { "*": "allow", "*.env": "deny", "*.env.*": "deny", "*.env.example": "allow" },
-  grep: "allow",
   glob: "allow",
   list: "allow",
 };
@@ -75,18 +77,77 @@ export function buildOpenCodePermissionArgs(
   return config.executionSafetyMode === "operator_gated" ? [] : ["--dangerously-skip-permissions"];
 }
 
+/** Drop per-agent `permission`/`tools` overrides so a default agent (e.g. Build) cannot re-allow denied tools. */
+function stripAgentPermissionOverrides(base: Record<string, unknown>): Record<string, unknown> {
+  if (!base.agent || typeof base.agent !== "object") {
+    return base;
+  }
+  const agents: Record<string, unknown> = {};
+  for (const [name, cfg] of Object.entries(base.agent as Record<string, unknown>)) {
+    if (cfg && typeof cfg === "object" && !Array.isArray(cfg)) {
+      const { permission: _permission, tools: _tools, ...rest } = cfg as Record<string, unknown>;
+      agents[name] = rest;
+    } else {
+      agents[name] = cfg;
+    }
+  }
+  return { ...base, agent: agents };
+}
+
 /**
- * Environment overrides enforcing the OpenCode permission posture, gated on the
- * execution-safety mode.
+ * Merge our gate with an operator-supplied `permission`, with DENY always
+ * winning so a stricter operator rule (e.g. denying `read` entirely or extra
+ * `.env`/secret patterns) is preserved while our denies are never relaxed.
+ */
+function mergeOperatorDenies(
+  gate: Record<string, OpenCodePermissionValue>,
+  operatorPermission: unknown,
+): Record<string, OpenCodePermissionValue> | "deny" {
+  if (operatorPermission === "deny") {
+    return "deny"; // operator denies everything — strictly stronger than our gate
+  }
+  if (!operatorPermission || typeof operatorPermission !== "object") {
+    return { ...gate };
+  }
+  const result: Record<string, OpenCodePermissionValue> = { ...gate };
+  for (const [tool, value] of Object.entries(operatorPermission as Record<string, unknown>)) {
+    if (value === "deny") {
+      result[tool] = "deny";
+    } else if (value && typeof value === "object" && !Array.isArray(value)) {
+      const mine = typeof result[tool] === "object" ? (result[tool] as Record<string, "allow" | "deny">) : {};
+      const merged: Record<string, "allow" | "deny"> = { ...mine };
+      for (const [pattern, action] of Object.entries(value as Record<string, unknown>)) {
+        if (action === "deny") {
+          merged[pattern] = "deny"; // keep operator deny patterns
+        }
+      }
+      result[tool] = merged;
+    }
+    // An operator "allow" never overrides our deny.
+  }
+  return result;
+}
+
+/**
+ * Environment overrides enforcing the OpenCode permission posture under
+ * `operator_gated`.
  *
- * OpenCode's defaults are permissive (most tools default to `allow`), so for
- * `operator_gated` just dropping the bypass flag still lets the model edit files
- * and run bash. Inject {@link OPENCODE_OPERATOR_GATED_PERMISSION} via the
- * highest-precedence inline config (`OPENCODE_CONFIG_CONTENT`) — `deny` is a
- * static, non-interactive block, so there is no approval prompt to hang a
- * headless `opencode run`. The injection is MERGED into any existing inline
- * config so provider/model/MCP settings carried in `OPENCODE_CONFIG_CONTENT` are
- * preserved; only the `permission` key is overridden.
+ * OpenCode's defaults are permissive, so the gate is injected on three fronts so
+ * it cannot be re-opened from ambient config:
+ *  - `OPENCODE_CONFIG_CONTENT`: our policy, MERGED into any existing inline
+ *    config (provider/model/MCP settings preserved), with operator `permission`
+ *    denies kept (deny wins) and per-agent permission/tools overrides stripped.
+ *  - `OPENCODE_PERMISSION`: overwritten with our policy so an inherited
+ *    `OPENCODE_PERMISSION={"bash":"allow"}` from the supervisor's shell cannot
+ *    re-enable dangerous tools.
+ *
+ * `deny` is a static, non-interactive block (no approval prompt to hang a
+ * headless `opencode run`).
+ *
+ * RESIDUAL RISK (documented on {@link OPENCODE_OPERATOR_GATED_PERMISSION}):
+ * agent-level overrides forced by a plugin, and repo custom tools that shadow an
+ * allowed built-in name, cannot be closed by injection. Only the Codex executor
+ * (OS sandbox) is a guaranteed non-interactive gate.
  */
 export function buildOpenCodePermissionEnv(
   config: Pick<SupervisorConfig, "executionSafetyMode">,
@@ -100,17 +161,20 @@ export function buildOpenCodePermissionEnv(
   if (existingConfigContent && existingConfigContent.trim() !== "") {
     try {
       const parsed = JSON.parse(existingConfigContent) as unknown;
-      if (parsed && typeof parsed === "object") {
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         base = parsed as Record<string, unknown>;
       }
     } catch {
-      // Malformed existing inline config: fall back to our policy alone rather
-      // than propagating an unparseable value.
+      // Malformed existing inline config: fall back to our policy alone.
     }
   }
 
+  const permission = mergeOperatorDenies(OPENCODE_OPERATOR_GATED_PERMISSION, base.permission);
+  const merged = { ...stripAgentPermissionOverrides(base), permission };
+
   return {
-    OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...base, permission: OPENCODE_OPERATOR_GATED_PERMISSION }),
+    OPENCODE_CONFIG_CONTENT: JSON.stringify(merged),
+    OPENCODE_PERMISSION: JSON.stringify(permission),
   };
 }
 import { buildCodexFailureContext, classifyFailure, classifyTurnError } from "../supervisor/supervisor-failure-helpers";

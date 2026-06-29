@@ -291,23 +291,35 @@ describe("CLI arg construction", () => {
     const policy = (JSON.parse(env.OPENCODE_CONFIG_CONTENT as string) as { permission: Record<string, unknown> })
       .permission;
     // Default-deny wildcard (covers custom/MCP tools) plus explicit dangerous
-    // built-ins, including lsp (so language-server commands cannot be spawned).
-    for (const tool of ["*", "edit", "bash", "webfetch", "websearch", "external_directory", "lsp"]) {
+    // built-ins, including lsp and grep (grep has no .env guard).
+    for (const tool of ["*", "edit", "bash", "webfetch", "websearch", "external_directory", "lsp", "grep"]) {
       assert.equal(policy[tool], "deny", `${tool} must be denied under operator_gated`);
     }
     // read stays allowed but keeps OpenCode's default .env denial.
     assert.deepEqual(policy.read, { "*": "allow", "*.env": "deny", "*.env.*": "deny", "*.env.example": "allow" });
+    // OPENCODE_PERMISSION is overwritten so an inherited permissive shell value
+    // cannot re-enable dangerous tools.
+    const envPermission = JSON.parse(env.OPENCODE_PERMISSION as string) as Record<string, unknown>;
+    assert.equal(envPermission.bash, "deny");
   });
 
-  test("buildOpenCodePermissionEnv merges into an existing inline OpenCode config", () => {
-    const existing = JSON.stringify({ model: "anthropic/claude", permission: { bash: "allow" } });
+  test("buildOpenCodePermissionEnv preserves settings/operator denies, strips agent overrides", () => {
+    const existing = JSON.stringify({
+      model: "anthropic/claude",
+      permission: { bash: "allow", read: "deny" },
+      agent: { build: { model: "x", permission: { bash: "allow", edit: "allow" } } },
+    });
     const env = buildOpenCodePermissionEnv({ executionSafetyMode: "operator_gated" }, existing);
     const merged = JSON.parse(env.OPENCODE_CONFIG_CONTENT as string) as {
       model?: string;
-      permission: Record<string, string>;
+      permission: Record<string, unknown>;
+      agent: { build: Record<string, unknown> };
     };
-    assert.equal(merged.model, "anthropic/claude", "non-permission settings must be preserved");
-    assert.equal(merged.permission.bash, "deny", "our deny policy must override the existing permission");
+    assert.equal(merged.model, "anthropic/claude", "non-permission settings preserved");
+    assert.equal(merged.permission.bash, "deny", "our deny overrides an operator allow");
+    assert.equal(merged.permission.read, "deny", "a stricter operator deny is preserved (deny wins)");
+    assert.equal(merged.agent.build.model, "x", "agent non-permission settings preserved");
+    assert.equal("permission" in merged.agent.build, false, "per-agent permission override stripped");
   });
 
   test("CodexExecutor builds correct CLI args (via the Codex policy builders it delegates to)", () => {

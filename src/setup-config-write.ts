@@ -248,6 +248,28 @@ function validateProspectiveSetupDocument(configPath: string, nextDocument: Reco
   if (validationError !== null) {
     throw new Error(validationError);
   }
+
+  // Reject the operator_gated + Claude combination before persisting, so a setup
+  // write cannot save a config that the next supervisor load would reject (which
+  // would otherwise leave the service unable to start from the saved file).
+  if (nextDocument.executionSafetyMode === "operator_gated") {
+    const binary = typeof nextDocument.executorBinary === "string" ? nextDocument.executorBinary.toLowerCase() : "";
+    const kind =
+      typeof nextDocument.executorKind === "string"
+        ? nextDocument.executorKind
+        : binary.includes("opencode")
+          ? "opencode"
+          : binary.includes("claude")
+            ? "claude"
+            : "codex";
+    if (kind === "claude") {
+      throw new Error(
+        "executionSafetyMode=operator_gated is not supported with the Claude Code executor " +
+          "(`claude -p` runs non-interactively with no operator approval channel); use the Codex or " +
+          "OpenCode executor for operator-gated runs.",
+      );
+    }
+  }
 }
 
 function normalizeSetupChanges(changes: unknown): SetupConfigChanges {

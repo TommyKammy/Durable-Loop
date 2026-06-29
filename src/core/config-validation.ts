@@ -155,6 +155,25 @@ export function validateParsedConfig(config: SupervisorConfig): void {
       "Invalid config field: localReviewFollowUpRepairEnabled (cannot enable same-PR local-review follow-up repair together with localReviewFollowUpIssueCreationEnabled)",
     );
   }
+  if (config.executionSafetyMode === "operator_gated") {
+    // Mirror resolveExecutorKind (executors/executor.ts), inlined to avoid a
+    // core -> executors dependency. Claude Code (`claude -p`) is non-interactive
+    // with no operator approval channel and no verified non-interactive
+    // permission mode, so it cannot honor operator_gated. Reject at config load
+    // (the daemon/run-once construct the executor outside the turn try, so a
+    // later throw would crash rather than surface a clean failure).
+    const binary = (config.executorBinary ?? "").toLowerCase();
+    const kind =
+      config.executorKind ??
+      (binary.includes("opencode") ? "opencode" : binary.includes("claude") ? "claude" : "codex");
+    if (kind === "claude") {
+      throw new Error(
+        "Invalid config field: executionSafetyMode (operator_gated is not supported with the Claude Code " +
+          "executor — `claude -p` runs non-interactively with no operator approval channel; use the Codex " +
+          "executor (sandboxed) or the OpenCode executor for operator-gated runs)",
+      );
+    }
+  }
 }
 
 function stripWrappingQuotes(value: string): string {

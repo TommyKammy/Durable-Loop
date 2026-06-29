@@ -20,30 +20,44 @@ import type { PromptBuilder } from "./types";
 import { parseAgentTurnStructuredResult } from "../supervisor/agent-runner";
 
 /**
- * Tools denied under `operator_gated` for OpenCode: mutations (`edit`), shell
- * (`bash`), network (`webfetch`), out-of-workspace access (`external_directory`),
- * and runaway loops (`doom_loop`). Read/search tools keep OpenCode's permissive
- * default so the executor can still analyze the repo.
+ * OpenCode `permission` policy injected under `operator_gated`. Default-deny via
+ * the `"*"` wildcard (which also covers custom tools and MCP tools), with the
+ * known mutating/network/escape built-ins denied explicitly so an existing
+ * global `opencode.json` `allow` cannot survive the merge, and read/search tools
+ * allowed so the executor can still analyze the repo.
+ *
+ * Verified against opencode 1.17.x with `opencode debug config`: this resolves
+ * every dangerous tool to `deny` and the read tools to `allow`.
+ *
+ * KNOWN LIMITATION: agent-level `permission` takes precedence over this top-level
+ * policy, so a host/plugin config that forces an agent's `permission` to `allow`
+ * (e.g. a global agent plugin) can still weaken the gate. This injection is a
+ * best-effort top-level gate, not an absolute guarantee; only the Codex executor
+ * (OS sandbox) provides a guaranteed non-interactive gate.
  */
-const OPENCODE_OPERATOR_GATED_DENIED_TOOLS = ["edit", "bash", "webfetch", "external_directory", "doom_loop"] as const;
+const OPENCODE_OPERATOR_GATED_PERMISSION: Record<string, "allow" | "deny"> = {
+  "*": "deny",
+  edit: "deny",
+  bash: "deny",
+  patch: "deny",
+  webfetch: "deny",
+  websearch: "deny",
+  external_directory: "deny",
+  doom_loop: "deny",
+  task: "deny",
+  read: "allow",
+  grep: "allow",
+  glob: "allow",
+  list: "allow",
+  lsp: "allow",
+};
 
 /**
- * Inline OpenCode config injected via `OPENCODE_CONFIG_CONTENT` for
- * `operator_gated` runs. Verified against opencode 1.17.x with
- * `opencode debug config`: this overrides the resolved `permission` policy
- * (inline config is higher precedence than project/global `opencode.json`).
- */
-export const OPENCODE_OPERATOR_GATED_CONFIG_CONTENT = JSON.stringify({
-  permission: Object.fromEntries(OPENCODE_OPERATOR_GATED_DENIED_TOOLS.map((tool) => [tool, "deny"])),
-});
-
-/**
- * Permission CLI args for the OpenCode executor, gated on the configured
- * execution-safety posture. `operator_gated` omits the bypass flag (the deny
- * policy injected via {@link buildOpenCodePermissionEnv} is the actual gate);
- * autonomous mode emits the skip-permissions flag (verified: `opencode run`
- * exposes `--dangerously-skip-permissions`, "auto-approve permissions that are
- * not explicitly denied").
+ * Permission CLI args for the OpenCode executor. `operator_gated` omits the
+ * bypass flag (the injected deny policy is the gate); autonomous mode emits the
+ * skip-permissions flag (verified: `opencode run` exposes
+ * `--dangerously-skip-permissions`, "auto-approve permissions that are not
+ * explicitly denied").
  */
 export function buildOpenCodePermissionArgs(
   config: Pick<SupervisorConfig, "executionSafetyMode">,
@@ -52,21 +66,42 @@ export function buildOpenCodePermissionArgs(
 }
 
 /**
- * Environment overrides enforcing the OpenCode permission posture.
+ * Environment overrides enforcing the OpenCode permission posture, gated on the
+ * execution-safety mode.
  *
  * OpenCode's defaults are permissive (most tools default to `allow`), so for
  * `operator_gated` just dropping the bypass flag still lets the model edit files
- * and run bash without approval. Inject a restrictive `deny` policy via the
- * highest-precedence inline config (`OPENCODE_CONFIG_CONTENT`) so the gate holds
- * even when the repo has no `opencode.json`. `deny` is a static, non-interactive
- * block — there is no approval prompt to hang a headless `opencode run`.
+ * and run bash. Inject {@link OPENCODE_OPERATOR_GATED_PERMISSION} via the
+ * highest-precedence inline config (`OPENCODE_CONFIG_CONTENT`) — `deny` is a
+ * static, non-interactive block, so there is no approval prompt to hang a
+ * headless `opencode run`. The injection is MERGED into any existing inline
+ * config so provider/model/MCP settings carried in `OPENCODE_CONFIG_CONTENT` are
+ * preserved; only the `permission` key is overridden.
  */
 export function buildOpenCodePermissionEnv(
   config: Pick<SupervisorConfig, "executionSafetyMode">,
+  existingConfigContent: string | undefined = process.env.OPENCODE_CONFIG_CONTENT,
 ): NodeJS.ProcessEnv {
-  return config.executionSafetyMode === "operator_gated"
-    ? { OPENCODE_CONFIG_CONTENT: OPENCODE_OPERATOR_GATED_CONFIG_CONTENT }
-    : {};
+  if (config.executionSafetyMode !== "operator_gated") {
+    return {};
+  }
+
+  let base: Record<string, unknown> = {};
+  if (existingConfigContent && existingConfigContent.trim() !== "") {
+    try {
+      const parsed = JSON.parse(existingConfigContent) as unknown;
+      if (parsed && typeof parsed === "object") {
+        base = parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Malformed existing inline config: fall back to our policy alone rather
+      // than propagating an unparseable value.
+    }
+  }
+
+  return {
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...base, permission: OPENCODE_OPERATOR_GATED_PERMISSION }),
+  };
 }
 import { buildCodexFailureContext, classifyFailure, classifyTurnError } from "../supervisor/supervisor-failure-helpers";
 import type {

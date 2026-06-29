@@ -18,7 +18,6 @@ import {
 } from "./executor-runner";
 import type { GitHubIssue, SupervisorConfig } from "../core/types";
 import { CodexExecutor } from "./codex-executor";
-import { createExecutor } from "./executor";
 import { OpenCodeExecutor, buildOpenCodeArgs } from "./opencode-executor";
 import { ClaudeCodeExecutor, buildClaudeCodeArgs } from "./claude-code-executor";
 import {
@@ -284,33 +283,30 @@ describe("CLI arg construction", () => {
     assert.deepEqual(buildOpenCodePermissionArgs({ executionSafetyMode: "operator_gated" }), []);
   });
 
-  test("buildOpenCodePermissionEnv injects a deny policy only when operator-gated", () => {
-    assert.deepEqual(buildOpenCodePermissionEnv({ executionSafetyMode: "unsandboxed_autonomous" }), {});
+  test("buildOpenCodePermissionEnv injects a wildcard deny policy only when operator-gated", () => {
+    assert.deepEqual(buildOpenCodePermissionEnv({ executionSafetyMode: "unsandboxed_autonomous" }, undefined), {});
 
-    const env = buildOpenCodePermissionEnv({ executionSafetyMode: "operator_gated" });
+    const env = buildOpenCodePermissionEnv({ executionSafetyMode: "operator_gated" }, undefined);
     assert.ok(env.OPENCODE_CONFIG_CONTENT, "expected an inline OpenCode config to be injected");
-    const policy = JSON.parse(env.OPENCODE_CONFIG_CONTENT as string) as {
-      permission: Record<string, string>;
-    };
-    // Mutations, shell, network and out-of-workspace access are denied (a static,
-    // non-interactive gate that does not depend on a repo opencode.json).
-    for (const tool of ["edit", "bash", "webfetch", "external_directory"]) {
-      assert.equal(policy.permission[tool], "deny", `${tool} must be denied under operator_gated`);
+    const policy = (JSON.parse(env.OPENCODE_CONFIG_CONTENT as string) as { permission: Record<string, string> })
+      .permission;
+    // Default-deny wildcard (covers custom/MCP tools) plus explicit dangerous
+    // built-ins; read/search stay allowed so the executor can still analyze.
+    for (const tool of ["*", "edit", "bash", "webfetch", "websearch", "external_directory"]) {
+      assert.equal(policy[tool], "deny", `${tool} must be denied under operator_gated`);
     }
+    assert.equal(policy.read, "allow");
   });
 
-  test("createExecutor rejects operator_gated for the Claude executor (no non-interactive approval channel)", () => {
-    assert.throws(
-      () =>
-        createExecutor(
-          createConfig({ executorBinary: "/usr/bin/claude", executionSafetyMode: "operator_gated" }),
-        ),
-      /operator_gated is not supported with the Claude Code executor/,
-    );
-    // Codex and OpenCode remain usable under operator_gated.
-    assert.doesNotThrow(() =>
-      createExecutor(createConfig({ executorBinary: "/usr/bin/opencode", executionSafetyMode: "operator_gated" })),
-    );
+  test("buildOpenCodePermissionEnv merges into an existing inline OpenCode config", () => {
+    const existing = JSON.stringify({ model: "anthropic/claude", permission: { bash: "allow" } });
+    const env = buildOpenCodePermissionEnv({ executionSafetyMode: "operator_gated" }, existing);
+    const merged = JSON.parse(env.OPENCODE_CONFIG_CONTENT as string) as {
+      model?: string;
+      permission: Record<string, string>;
+    };
+    assert.equal(merged.model, "anthropic/claude", "non-permission settings must be preserved");
+    assert.equal(merged.permission.bash, "deny", "our deny policy must override the existing permission");
   });
 
   test("CodexExecutor builds correct CLI args (via the Codex policy builders it delegates to)", () => {

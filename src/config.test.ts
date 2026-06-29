@@ -3075,6 +3075,42 @@ test("updateSetupConfig accepts trust posture through the setup-owned write surf
   assert.equal(result.readiness.trustPosture.warning, null);
 });
 
+test("loadConfig rejects operator_gated with the Claude executor and accepts Codex/OpenCode", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-gated-executor-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const base = {
+    repoPath: ".",
+    repoSlug: "owner/repo",
+    defaultBranch: "main",
+    workspaceRoot: "./worktrees",
+    stateFile: "./state.json",
+    branchPrefix: "codex/issue-",
+    reviewBotLogins: ["chatgpt-codex-connector"],
+    executionSafetyMode: "operator_gated",
+  };
+  const write = async (name: string, executorBinary: string): Promise<string> => {
+    const p = path.join(tempDir, name);
+    await fs.writeFile(p, JSON.stringify({ ...base, executorBinary }), "utf8");
+    return p;
+  };
+
+  const claudePath = await write("claude.config.json", "/usr/bin/claude");
+  const opencodePath = await write("opencode.config.json", "/usr/bin/opencode");
+  const codexPath = await write("codex.config.json", "/usr/bin/codex");
+
+  // Claude `claude -p` has no non-interactive approval channel — rejected at load
+  // (before the daemon constructs the executor) rather than crashing later.
+  assert.throws(
+    () => loadConfig(claudePath),
+    /operator_gated is not supported with the Claude Code executor/,
+  );
+  // Codex (sandbox) and OpenCode (injected deny policy) remain valid.
+  assert.doesNotThrow(() => loadConfig(opencodePath));
+  assert.doesNotThrow(() => loadConfig(codexPath));
+});
+
 test("updateSetupConfig restart detection treats trust posture values as exact enums", async (t) => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-update-trust-posture-exact-"));
   t.after(async () => {

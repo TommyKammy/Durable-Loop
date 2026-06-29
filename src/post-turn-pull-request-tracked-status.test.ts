@@ -412,7 +412,7 @@ test("syncTrackedPrPersistentStatusComment comments with clustered Codex churn e
       processedReviewThreadIds: [],
       processedReviewThreadFingerprints: [],
       verificationProbeOutcomes: [],
-      codexConnectorReviewChurnProgress: {
+      reviewChurnProgress: {
         currentHeadSha: pr.headRefOid,
         currentEffectiveMustFixCount: 5,
         dominantFile: "src/release-readiness.ts",
@@ -420,7 +420,7 @@ test("syncTrackedPrPersistentStatusComment comments with clustered Codex churn e
         clusterCategorySignature: "readiness_claim+truth_source+verifier_or_issue_lint",
         representativeThreadIds: ["thread-current-0", "thread-current-1"],
       },
-      codexConnectorReviewChurnComparison: {
+      reviewChurnComparison: {
         classification: "worse",
         currentHeadSha: pr.headRefOid,
         previousHeadSha: "head-previous-1390",
@@ -537,7 +537,7 @@ test("syncTrackedPrPersistentStatusComment skips clustered Codex churn comments 
       reviewDecision: "CHANGES_REQUESTED",
       mergeStateStatus: "CLEAN",
       checks: ["build:pass:SUCCESS:CI"],
-      codexConnectorReviewChurnProgress: {
+      reviewChurnProgress: {
         currentHeadSha: "head-previous-1390",
         currentEffectiveMustFixCount: 5,
         dominantFile: "src/release-readiness.ts",
@@ -545,7 +545,7 @@ test("syncTrackedPrPersistentStatusComment skips clustered Codex churn comments 
         clusterCategorySignature: "readiness_claim+truth_source+verifier_or_issue_lint",
         representativeThreadIds: ["thread-current-0"],
       },
-      codexConnectorReviewChurnComparison: {
+      reviewChurnComparison: {
         classification: "unchanged",
         currentHeadSha: "head-previous-1390",
         previousHeadSha: "head-previous-1389",
@@ -652,14 +652,14 @@ test("syncTrackedPrPersistentStatusComment rejects clustered Codex churn snapsho
       reviewDecision: "CHANGES_REQUESTED",
       mergeStateStatus: "CLEAN",
       checks: ["build:pass:SUCCESS:CI"],
-      codexConnectorReviewChurnProgress: {
+      reviewChurnProgress: {
         currentEffectiveMustFixCount: 5,
         dominantFile: "src/release-readiness.ts",
         dominantFilePercent: 100,
         clusterCategorySignature: "readiness_claim+truth_source+verifier_or_issue_lint",
         representativeThreadIds: ["thread-current-0"],
       },
-      codexConnectorReviewChurnComparison: {
+      reviewChurnComparison: {
         classification: "unchanged",
         previousHeadSha: "head-previous-1389",
         currentEffectiveMustFixCount: 5,
@@ -671,8 +671,8 @@ test("syncTrackedPrPersistentStatusComment rejects clustered Codex churn snapsho
       snapshot.headRefOid = scenario.snapshotHeadSha;
     }
     if (scenario.progressHeadSha) {
-      (snapshot.codexConnectorReviewChurnProgress as Record<string, unknown>).currentHeadSha = scenario.progressHeadSha;
-      (snapshot.codexConnectorReviewChurnComparison as Record<string, unknown>).currentHeadSha = scenario.progressHeadSha;
+      (snapshot.reviewChurnProgress as Record<string, unknown>).currentHeadSha = scenario.progressHeadSha;
+      (snapshot.reviewChurnComparison as Record<string, unknown>).currentHeadSha = scenario.progressHeadSha;
     }
     const record = createRecord({
       issue_number: 102,

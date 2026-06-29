@@ -56,9 +56,9 @@ function activeStableSameFileChurnDossierSignature(
 
   try {
     const parsed = JSON.parse(record.last_tracked_pr_progress_snapshot) as {
-      codexConnectorStableSameFileChurn?: unknown;
+      stableSameFileChurn?: unknown;
     };
-    const stable = parsed.codexConnectorStableSameFileChurn;
+    const stable = parsed.stableSameFileChurn;
     if (!isCodexConnectorStableSameFileChurn(stable)) {
       return null;
     }

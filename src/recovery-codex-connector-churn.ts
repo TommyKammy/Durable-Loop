@@ -44,7 +44,7 @@ export function codexConnectorChurnStopEvidenceSource(
   if (record.last_tracked_pr_progress_snapshot) {
     try {
       const parsed = JSON.parse(record.last_tracked_pr_progress_snapshot);
-      if (parsed?.codexConnectorReviewChurnProgress !== undefined) {
+      if (parsed?.reviewChurnProgress !== undefined) {
         return "snapshot";
       }
     } catch {
@@ -194,7 +194,7 @@ export function buildPreservedCodexConnectorChurnProgressSnapshot(args: {
           `${artifact.gate}:${artifact.command ?? "none"}:${artifact.outcome}:${artifact.remediation_target ?? "none"}`,
       )
       .sort(),
-    codexConnectorReviewChurnProgress: churnDiagnostic
+    reviewChurnProgress: churnDiagnostic
       ? buildCodexConnectorReviewChurnProgressSummary(churnDiagnostic, args.pr.headRefOid)
       : {
           currentHeadSha: args.pr.headRefOid,

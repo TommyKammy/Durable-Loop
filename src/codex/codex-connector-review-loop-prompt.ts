@@ -41,12 +41,12 @@ export function buildCodexConnectorStableSameFileChurnDossier(
   }
 
   let snapshot: {
-    codexConnectorReviewChurnHistory?: Array<{
+    reviewChurnHistory?: Array<{
       reviewedHeadSha: string;
       effectiveMustFixCount: number;
       clusterCategorySignature: string;
     }>;
-    codexConnectorStableSameFileChurn?: {
+    stableSameFileChurn?: {
       streak: number;
       dominantFile: string;
       clusterCategorySignature: string;
@@ -61,7 +61,7 @@ export function buildCodexConnectorStableSameFileChurnDossier(
     return [];
   }
 
-  const stable = snapshot.codexConnectorStableSameFileChurn;
+  const stable = snapshot.stableSameFileChurn;
   if (!isCodexConnectorStableSameFileChurn(stable)) {
     return [];
   }
@@ -71,7 +71,7 @@ export function buildCodexConnectorStableSameFileChurnDossier(
     return [];
   }
 
-  const history = (snapshot.codexConnectorReviewChurnHistory ?? []).filter((entry) =>
+  const history = (snapshot.reviewChurnHistory ?? []).filter((entry) =>
     stable.reviewedHeadShas.includes(entry.reviewedHeadSha),
   );
   const representativeSourceUrls = uniqueNonEmpty(

@@ -3971,7 +3971,7 @@ test("executeCodexTurnPhase does not consume a stable churn dossier before runTu
         mergeStateStatus: "BLOCKED",
         checks: [],
         unresolvedReviewThreadIds: ["thread-current-0"],
-        codexConnectorStableSameFileChurn: {
+        stableSameFileChurn: {
           streak: 3,
           dominantFile: "src/release-readiness.ts",
           clusterCategorySignature: "claim_detection+truth_source",
@@ -4107,7 +4107,7 @@ test("executeCodexTurnPhase does not consume a stable churn dossier when Codex f
         mergeStateStatus: "BLOCKED",
         checks: [],
         unresolvedReviewThreadIds: ["thread-current-0"],
-        codexConnectorStableSameFileChurn: {
+        stableSameFileChurn: {
           streak: 3,
           dominantFile: "src/release-readiness.ts",
           clusterCategorySignature: "claim_detection+truth_source",

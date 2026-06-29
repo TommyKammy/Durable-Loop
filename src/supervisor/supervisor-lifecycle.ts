@@ -23,7 +23,6 @@ import { inferFailureContext } from "./supervisor-failure-context";
 import { mergeConflictDetected, summarizeChecks } from "./supervisor-status-rendering";
 import {
   clusterConfiguredBotReviewThreads,
-  compareCodexConnectorReviewChurnProgress,
   codexConnectorStableSameFileChurnSignature,
   isCodexConnectorStableSameFileChurn,
   type CodexConnectorReviewChurnHistoryEntry,
@@ -134,10 +133,10 @@ interface TrackedPrProgressSnapshot {
   processedReviewThreadIds?: string[];
   processedReviewThreadFingerprints?: string[];
   verificationProbeOutcomes?: string[];
-  codexConnectorReviewChurnProgress?: CodexConnectorReviewChurnProgressSummary;
-  codexConnectorReviewChurnComparison?: CodexConnectorReviewChurnProgressComparison;
-  codexConnectorReviewChurnHistory?: CodexConnectorReviewChurnHistoryEntry[];
-  codexConnectorStableSameFileChurn?: CodexConnectorStableSameFileChurn;
+  reviewChurnProgress?: CodexConnectorReviewChurnProgressSummary;
+  reviewChurnComparison?: CodexConnectorReviewChurnProgressComparison;
+  reviewChurnHistory?: CodexConnectorReviewChurnHistoryEntry[];
+  stableSameFileChurn?: CodexConnectorStableSameFileChurn;
 }
 
 export interface TrackedPrRepeatFailureDisposition {
@@ -156,7 +155,7 @@ export function unconsumedStableSameFileCodexConnectorChurnDossierSignature(
   >,
 ): string | null {
   const snapshot = parseTrackedPrProgressSnapshot(record.last_tracked_pr_progress_snapshot);
-  const stable = snapshot?.codexConnectorStableSameFileChurn;
+  const stable = snapshot?.stableSameFileChurn;
   if (!isCodexConnectorStableSameFileChurn(stable)) {
     return null;
   }
@@ -201,19 +200,19 @@ function buildTrackedPrProgressSnapshot(
   const previous = parseTrackedPrProgressSnapshot(record.last_tracked_pr_progress_snapshot);
   const churnAdapter = selectChurnAdapter(config);
   const codexConnectorReviewChurn = churnAdapter.buildChurnDiagnostic(config, reviewThreads, pr);
-  const codexConnectorReviewChurnProgress = churnAdapter.buildChurnProgressSummary(
+  const reviewChurnProgress = churnAdapter.buildChurnProgressSummary(
     codexConnectorReviewChurn,
     pr.headRefOid,
   );
-  const codexConnectorReviewChurnHistory = codexConnectorReviewChurnProgress
+  const reviewChurnHistory = reviewChurnProgress
     ? churnAdapter.buildChurnHistory({
-        current: codexConnectorReviewChurnProgress,
-        previousProgress: previous?.codexConnectorReviewChurnProgress ?? null,
-        previousHistory: previous?.codexConnectorReviewChurnHistory ?? null,
+        current: reviewChurnProgress,
+        previousProgress: previous?.reviewChurnProgress ?? null,
+        previousHistory: previous?.reviewChurnHistory ?? null,
       })
     : null;
-  const codexConnectorStableSameFileChurn = churnAdapter.detectStableSameFileChurn(
-    codexConnectorReviewChurnHistory,
+  const stableSameFileChurn = churnAdapter.detectStableSameFileChurn(
+    reviewChurnHistory,
   );
   return {
     headRefOid: pr.headRefOid,
@@ -251,14 +250,14 @@ function buildTrackedPrProgressSnapshot(
     ...(unresolvedReviewThreadClusterSignatures.length > 0
       ? { unresolvedReviewThreadClusterSignatures }
       : {}),
-    ...(codexConnectorReviewChurnProgress
+    ...(reviewChurnProgress
       ? {
-          codexConnectorReviewChurnProgress,
-          ...(codexConnectorReviewChurnHistory
-            ? { codexConnectorReviewChurnHistory }
+          reviewChurnProgress,
+          ...(reviewChurnHistory
+            ? { reviewChurnHistory }
             : {}),
-          ...(codexConnectorStableSameFileChurn
-            ? { codexConnectorStableSameFileChurn }
+          ...(stableSameFileChurn
+            ? { stableSameFileChurn }
             : {}),
         }
       : {}),
@@ -281,9 +280,34 @@ function parseTrackedPrProgressSnapshot(snapshot: string | null | undefined): Tr
     ) {
       return null;
     }
+    migrateLegacyChurnSnapshotKeys(parsed as Record<string, unknown>);
     return parsed as TrackedPrProgressSnapshot;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Read-time migration: the churn snapshot fields were renamed from the
+ * Codex-specific `codexConnector*` names to executor-neutral names. Map the
+ * legacy keys embedded in older persisted `progressSnapshot` strings onto the
+ * canonical keys (preferring an already-present canonical value) and drop the
+ * legacy keys so re-serialization only writes the neutral names.
+ */
+function migrateLegacyChurnSnapshotKeys(parsed: Record<string, unknown>): void {
+  const legacyKeyMap: Record<string, keyof TrackedPrProgressSnapshot> = {
+    codexConnectorReviewChurnProgress: "reviewChurnProgress",
+    codexConnectorReviewChurnComparison: "reviewChurnComparison",
+    codexConnectorReviewChurnHistory: "reviewChurnHistory",
+    codexConnectorStableSameFileChurn: "stableSameFileChurn",
+  };
+  for (const [legacyKey, canonicalKey] of Object.entries(legacyKeyMap)) {
+    if (legacyKey in parsed) {
+      if (!(canonicalKey in parsed) && parsed[legacyKey] !== undefined) {
+        parsed[canonicalKey] = parsed[legacyKey];
+      }
+      delete parsed[legacyKey];
+    }
   }
 }
 
@@ -340,8 +364,8 @@ function clusteredCodexChurnMadeNoProgress(
   previous: TrackedPrProgressSnapshot | null,
   current: TrackedPrProgressSnapshot,
 ): boolean {
-  const previousChurn = previous?.codexConnectorReviewChurnProgress;
-  const currentChurn = current.codexConnectorReviewChurnProgress;
+  const previousChurn = previous?.reviewChurnProgress;
+  const currentChurn = current.reviewChurnProgress;
   if (!previousChurn || !currentChurn) {
     return false;
   }
@@ -358,7 +382,7 @@ function hasReviewedClusteredCodexChurnStopSignal(
   current: TrackedPrProgressSnapshot,
   record: Pick<IssueRunRecord, "codex_connector_stable_churn_dossier_consumed_signature">,
 ): boolean {
-  const stable = previous?.codexConnectorStableSameFileChurn;
+  const stable = previous?.stableSameFileChurn;
   return Boolean(
     clusteredCodexChurnMadeNoProgress(previous, current) &&
       isCodexConnectorStableSameFileChurn(stable) &&
@@ -412,13 +436,13 @@ function listChangedSignals(previous: TrackedPrProgressSnapshot | null, current:
   }
   if (
     !noProgressClusteredCodexChurn &&
-    previous?.codexConnectorReviewChurnProgress &&
-    current.codexConnectorReviewChurnProgress &&
+    previous?.reviewChurnProgress &&
+    current.reviewChurnProgress &&
     (
-      previous.codexConnectorReviewChurnProgress.dominantFile !==
-        current.codexConnectorReviewChurnProgress.dominantFile ||
-      previous.codexConnectorReviewChurnProgress.clusterCategorySignature !==
-        current.codexConnectorReviewChurnProgress.clusterCategorySignature
+      previous.reviewChurnProgress.dominantFile !==
+        current.reviewChurnProgress.dominantFile ||
+      previous.reviewChurnProgress.clusterCategorySignature !==
+        current.reviewChurnProgress.clusterCategorySignature
     )
   ) {
     signals.push("review_thread_cluster_identity_changed");
@@ -519,16 +543,16 @@ export function summarizeTrackedPrProgress(
   const previous = parseTrackedPrProgressSnapshot(record.last_tracked_pr_progress_snapshot);
   const signals = listChangedSignals(previous, current);
   const churnComparison =
-    current.codexConnectorReviewChurnProgress && previous?.codexConnectorReviewChurnProgress
-      ? compareCodexConnectorReviewChurnProgress(
-          current.codexConnectorReviewChurnProgress,
-          previous.codexConnectorReviewChurnProgress,
+    current.reviewChurnProgress && previous?.reviewChurnProgress
+      ? selectChurnAdapter(config).compareChurnProgress(
+          current.reviewChurnProgress,
+          previous.reviewChurnProgress,
         )
       : null;
   const snapshot = churnComparison
     ? JSON.stringify({
         ...current,
-        codexConnectorReviewChurnComparison: churnComparison,
+        reviewChurnComparison: churnComparison,
       })
     : JSON.stringify(current);
 
@@ -596,7 +620,7 @@ export function determineTrackedPrRepeatFailureDisposition(args: {
     return {
       shouldStop: true,
       progressSnapshot: snapshot,
-      progressSummary: `no_progress_clustered_codex_churn current_effective_must_fix=${current.codexConnectorReviewChurnProgress?.currentEffectiveMustFixCount ?? "unknown"} dossier_attempt=consumed`,
+      progressSummary: `no_progress_clustered_codex_churn current_effective_must_fix=${current.reviewChurnProgress?.currentEffectiveMustFixCount ?? "unknown"} dossier_attempt=consumed`,
       decision: "stop_no_progress",
     };
   }
@@ -614,7 +638,7 @@ export function determineTrackedPrRepeatFailureDisposition(args: {
     return {
       shouldStop: true,
       progressSnapshot: snapshot,
-      progressSummary: `no_progress_clustered_codex_churn current_effective_must_fix=${current.codexConnectorReviewChurnProgress?.currentEffectiveMustFixCount ?? "unknown"}`,
+      progressSummary: `no_progress_clustered_codex_churn current_effective_must_fix=${current.reviewChurnProgress?.currentEffectiveMustFixCount ?? "unknown"}`,
       decision: "stop_no_progress",
     };
   }

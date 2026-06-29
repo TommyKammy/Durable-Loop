@@ -1691,7 +1691,7 @@ test("buildCodexPrompt adds a stable same-file Codex Connector churn repair doss
         mergeStateStatus: "BLOCKED",
         checks: [],
         unresolvedReviewThreadIds: threads.map((thread) => thread.id),
-        codexConnectorReviewChurnHistory: [
+        reviewChurnHistory: [
           {
             reviewedHeadSha: "head-previous-2250",
             effectiveMustFixCount: 4,
@@ -1714,7 +1714,7 @@ test("buildCodexPrompt adds a stable same-file Codex Connector churn repair doss
             representativeThreadIds: ["thread-current-0", "thread-current-1"],
           },
         ],
-        codexConnectorStableSameFileChurn: {
+        stableSameFileChurn: {
           streak: 3,
           dominantFile: "src/release-readiness.ts",
           clusterCategorySignature: "claim_detection+truth_source",
@@ -1775,7 +1775,7 @@ test("buildCodexConnectorStableSameFileChurnDossier directly renders unconsumed 
     state: "addressing_review",
     record: {
       last_tracked_pr_progress_snapshot: JSON.stringify({
-        codexConnectorReviewChurnHistory: [
+        reviewChurnHistory: [
           {
             reviewedHeadSha: "head-current-2250",
             effectiveMustFixCount: 5,
@@ -1784,7 +1784,7 @@ test("buildCodexConnectorStableSameFileChurnDossier directly renders unconsumed 
             representativeThreadIds: ["thread-current-0", "thread-current-1"],
           },
         ],
-        codexConnectorStableSameFileChurn: {
+        stableSameFileChurn: {
           streak: 3,
           dominantFile: "src/release-readiness.ts",
           clusterCategorySignature: "claim_detection+truth_source",

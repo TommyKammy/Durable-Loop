@@ -505,7 +505,7 @@ test("releaseCodexConnectorChurnLatchForOperator accepts preserved snapshot-back
     headRefOid: "head-current-191",
     unresolvedReviewThreadIds: ["thread-authority"],
     unresolvedReviewThreadFingerprints: ["thread-authority#comment-authority"],
-    codexConnectorReviewChurnProgress: {
+    reviewChurnProgress: {
       currentHeadSha: "head-current-191",
       currentEffectiveMustFixCount: 1,
       dominantFile: "src/release-readiness.ts",

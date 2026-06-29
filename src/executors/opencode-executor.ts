@@ -32,6 +32,7 @@ import type {
 } from "../core/types";
 import { resolveExecutorTurnTimeoutMinutes } from "../core/config-types";
 import {
+  assertOperatorGatedUnsupported,
   createExecutorAgentRunner,
   runExecutorCliCommand,
   type ExecutorTurnResult,
@@ -75,6 +76,7 @@ export function buildOpenCodeArgs(
   state?: RunState,
   sessionId?: string | null,
 ): string[] {
+  assertOperatorGatedUnsupported(config, "opencode");
   const args: string[] = ["run", "--format", "json"];
 
   // Model selection — OpenCode uses provider/model format
@@ -94,7 +96,11 @@ export function buildOpenCodeArgs(
     args.push("--session", sessionId);
   }
 
-  // Autonomous permissions
+  // OpenCode runs autonomously: operator_gated is rejected at config load
+  // (config-validation), because OpenCode's permission enforcement is layered on
+  // extensible, overridable config (agents/OPENCODE_PERMISSION/custom tools/
+  // plugins/MCP startup) that the supervisor cannot reliably gate. Only the Codex
+  // executor's OS sandbox provides a guaranteed non-interactive gate.
   args.push("--dangerously-skip-permissions");
 
   // Workspace directory
@@ -204,6 +210,7 @@ export class OpenCodeExecutor implements Executor {
   private readonly runner: AgentRunner;
 
   constructor(options: OpenCodeExecutorOptions) {
+    assertOperatorGatedUnsupported(options.config, "opencode");
     const baseCaps = (options.probeCapabilitiesImpl ?? detectOpenCodeCapabilities)(
       options.config,
     );

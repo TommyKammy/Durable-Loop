@@ -31,6 +31,7 @@ import type {
 } from "../core/types";
 import { resolveExecutorTurnTimeoutMinutes } from "../core/config-types";
 import {
+  assertOperatorGatedUnsupported,
   createExecutorAgentRunner,
   runExecutorCliCommand,
   type ExecutorTurnResult,
@@ -75,6 +76,7 @@ export function buildClaudeCodeArgs(
   state: RunState,
   sessionId?: string | null,
 ): string[] {
+  assertOperatorGatedUnsupported(config, "claude");
   const args: string[] = ["-p", "--output-format", "json"];
 
   // Model selection
@@ -94,7 +96,10 @@ export function buildClaudeCodeArgs(
     args.push("--resume", sessionId);
   }
 
-  // Autonomous permissions
+  // Claude Code runs autonomously: `claude -p` is non-interactive (stdin is not
+  // wired to an operator), so there is no live approval channel. operator_gated is
+  // therefore rejected up front in createExecutor rather than reaching here, so
+  // this executor only ever runs in the autonomous posture.
   args.push("--dangerously-skip-permissions");
 
   // Workspace directory access
@@ -203,6 +208,7 @@ export class ClaudeCodeExecutor implements Executor {
   private readonly runner: AgentRunner;
 
   constructor(options: ClaudeCodeExecutorOptions) {
+    assertOperatorGatedUnsupported(options.config, "claude");
     const baseCaps = (options.probeCapabilitiesImpl ?? detectClaudeCodeCapabilities)(
       options.config,
     );

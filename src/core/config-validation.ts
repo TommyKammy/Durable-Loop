@@ -155,6 +155,31 @@ export function validateParsedConfig(config: SupervisorConfig): void {
       "Invalid config field: localReviewFollowUpRepairEnabled (cannot enable same-PR local-review follow-up repair together with localReviewFollowUpIssueCreationEnabled)",
     );
   }
+  if (config.executionSafetyMode === "operator_gated") {
+    // operator_gated requires a permission boundary the supervisor can guarantee
+    // non-interactively. Only the Codex executor provides one (an OS sandbox).
+    // OpenCode and Claude enforce permissions through their own extensible,
+    // overridable configuration (agent/file-based agent/OPENCODE_PERMISSION/
+    // legacy tools/custom tools/plugins/MCP startup, etc.), so a config-injected
+    // deny cannot reach complete mediation and repo-controlled code can execute
+    // regardless — therefore both fail closed here rather than ship a bypassable
+    // gate. Rejected at config load (the daemon/run-once construct the executor
+    // outside the turn try, so a later throw would crash instead of surfacing a
+    // clean failure). The kind check mirrors resolveExecutorKind, inlined to
+    // avoid a core -> executors dependency.
+    const binary = (config.executorBinary ?? "").toLowerCase();
+    const kind =
+      config.executorKind ??
+      (binary.includes("opencode") ? "opencode" : binary.includes("claude") ? "claude" : "codex");
+    if (kind !== "codex") {
+      throw new Error(
+        `Invalid config field: executionSafetyMode (operator_gated is only supported with the Codex ` +
+          `executor, which enforces a guaranteed non-interactive OS sandbox; the ${kind} executor enforces ` +
+          `permissions through extensible, overridable config that cannot be gated reliably. Use the Codex ` +
+          `executor for operator-gated runs, or executionSafetyMode=unsandboxed_autonomous)`,
+      );
+    }
+  }
 }
 
 function stripWrappingQuotes(value: string): string {

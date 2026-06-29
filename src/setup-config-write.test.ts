@@ -51,3 +51,45 @@ test("updateSetupConfig migrates a legacy codexBinary even when an unrelated fie
   assert.equal(written.executorBinary, "/usr/bin/codex");
   assert.equal("codexBinary" in written, false);
 });
+
+test("updateSetupConfig rejects switching a non-Codex config to operator_gated before persisting", async () => {
+  // The prospective document must be validated before write, so the saved config
+  // can never be one the next supervisor load would reject. Only Codex provides a
+  // guaranteed gate; both non-Codex executors fail closed.
+  for (const binary of ["/usr/bin/claude", "/usr/bin/opencode"]) {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "setup-write-gated-"));
+    const configPath = path.join(dir, "supervisor.config.json");
+    await fs.writeFile(configPath, JSON.stringify({ executorBinary: binary, repoPath: "/repo" }), "utf8");
+
+    await assert.rejects(
+      updateSetupConfig({
+        configPath,
+        changes: { executionSafetyMode: "operator_gated" } as unknown as SetupConfigChanges,
+      }),
+      /operator_gated is only supported with the Codex executor/,
+    );
+
+    // The on-disk config is unchanged (no operator_gated persisted).
+    const after = JSON.parse(await fs.readFile(configPath, "utf8")) as Record<string, unknown>;
+    assert.equal("executionSafetyMode" in after, false);
+  }
+});
+
+test("updateSetupConfig resolves a relative executorBinary the same way as load before gating", async () => {
+  // A relative binary is resolved relative to the config dir (resolveCommandLikeValue)
+  // before kind inference, matching loadConfig. In a config dir whose path contains
+  // "opencode", a relative `./bin/codex` resolves to an opencode-containing path, so
+  // setup must reject operator_gated here too rather than persist a config the next
+  // load would reject (leaving the service unable to start).
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-runner-"));
+  const configPath = path.join(dir, "supervisor.config.json");
+  await fs.writeFile(configPath, JSON.stringify({ executorBinary: "./bin/codex", repoPath: "/repo" }), "utf8");
+
+  await assert.rejects(
+    updateSetupConfig({
+      configPath,
+      changes: { executionSafetyMode: "operator_gated" } as unknown as SetupConfigChanges,
+    }),
+    /operator_gated is only supported with the Codex executor/,
+  );
+});

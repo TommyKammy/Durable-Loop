@@ -3075,6 +3075,39 @@ test("updateSetupConfig accepts trust posture through the setup-owned write surf
   assert.equal(result.readiness.trustPosture.warning, null);
 });
 
+test("loadConfig allows operator_gated only with the Codex executor (non-Codex fails closed)", async (t) => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-gated-executor-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+  const base = {
+    repoPath: ".",
+    repoSlug: "owner/repo",
+    defaultBranch: "main",
+    workspaceRoot: "./worktrees",
+    stateFile: "./state.json",
+    branchPrefix: "codex/issue-",
+    reviewBotLogins: ["chatgpt-codex-connector"],
+    executionSafetyMode: "operator_gated",
+  };
+  const write = async (name: string, executorBinary: string): Promise<string> => {
+    const p = path.join(tempDir, name);
+    await fs.writeFile(p, JSON.stringify({ ...base, executorBinary }), "utf8");
+    return p;
+  };
+
+  const claudePath = await write("claude.config.json", "/usr/bin/claude");
+  const opencodePath = await write("opencode.config.json", "/usr/bin/opencode");
+  const codexPath = await write("codex.config.json", "/usr/bin/codex");
+
+  // Only the Codex executor provides a guaranteed non-interactive sandbox; both
+  // non-Codex executors fail closed at load (before the daemon constructs the
+  // executor) rather than ship a config-injected gate that can be bypassed.
+  assert.throws(() => loadConfig(claudePath), /operator_gated is only supported with the Codex executor/);
+  assert.throws(() => loadConfig(opencodePath), /operator_gated is only supported with the Codex executor/);
+  assert.doesNotThrow(() => loadConfig(codexPath));
+});
+
 test("updateSetupConfig restart detection treats trust posture values as exact enums", async (t) => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-update-trust-posture-exact-"));
   t.after(async () => {

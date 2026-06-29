@@ -7,6 +7,7 @@ import {
   resolveConfigPath,
   validateWorkspacePreparationCommandForWorktrees,
 } from "./core/config";
+import { resolveCommandLikeValue } from "./core/config-parsing";
 import { reviewProviderProfileFromConfig } from "./core/review-providers";
 import { isValidGitRefName, parseJson, resolveMaybeRelative, writeJsonAtomic } from "./core/utils";
 import type { ExecutionSafetyMode, TrustMode } from "./core/types";
@@ -247,6 +248,36 @@ function validateProspectiveSetupDocument(configPath: string, nextDocument: Reco
   });
   if (validationError !== null) {
     throw new Error(validationError);
+  }
+
+  // Reject operator_gated for any non-Codex executor before persisting, so a
+  // setup write cannot save a config the next supervisor load would reject (which
+  // would otherwise leave the service unable to start from the saved file). Only
+  // the Codex executor provides a guaranteed non-interactive permission boundary
+  // (OS sandbox); OpenCode/Claude enforce permissions through extensible,
+  // overridable config that cannot be reliably gated.
+  if (nextDocument.executionSafetyMode === "operator_gated") {
+    // Resolve the binary the same way loadConfig does (resolveCommandLikeValue,
+    // relative to the config dir) before inferring kind, so setup-write and the
+    // next load agree — otherwise a relative binary under a config dir whose path
+    // contains "opencode"/"claude" would be accepted here but rejected on load.
+    const rawBinary = typeof nextDocument.executorBinary === "string" ? nextDocument.executorBinary : "";
+    const binary = resolveCommandLikeValue(configDir, rawBinary).toLowerCase();
+    const kind =
+      typeof nextDocument.executorKind === "string"
+        ? nextDocument.executorKind
+        : binary.includes("opencode")
+          ? "opencode"
+          : binary.includes("claude")
+            ? "claude"
+            : "codex";
+    if (kind !== "codex") {
+      throw new Error(
+        `executionSafetyMode=operator_gated is only supported with the Codex executor (guaranteed ` +
+          `non-interactive OS sandbox); the ${kind} executor cannot be reliably gated. Use the Codex executor ` +
+          `for operator-gated runs, or executionSafetyMode=unsandboxed_autonomous.`,
+      );
+    }
   }
 }
 

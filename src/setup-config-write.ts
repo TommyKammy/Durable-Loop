@@ -249,9 +249,12 @@ function validateProspectiveSetupDocument(configPath: string, nextDocument: Reco
     throw new Error(validationError);
   }
 
-  // Reject the operator_gated + Claude combination before persisting, so a setup
-  // write cannot save a config that the next supervisor load would reject (which
-  // would otherwise leave the service unable to start from the saved file).
+  // Reject operator_gated for any non-Codex executor before persisting, so a
+  // setup write cannot save a config the next supervisor load would reject (which
+  // would otherwise leave the service unable to start from the saved file). Only
+  // the Codex executor provides a guaranteed non-interactive permission boundary
+  // (OS sandbox); OpenCode/Claude enforce permissions through extensible,
+  // overridable config that cannot be reliably gated.
   if (nextDocument.executionSafetyMode === "operator_gated") {
     const binary = typeof nextDocument.executorBinary === "string" ? nextDocument.executorBinary.toLowerCase() : "";
     const kind =
@@ -262,11 +265,11 @@ function validateProspectiveSetupDocument(configPath: string, nextDocument: Reco
           : binary.includes("claude")
             ? "claude"
             : "codex";
-    if (kind === "claude") {
+    if (kind !== "codex") {
       throw new Error(
-        "executionSafetyMode=operator_gated is not supported with the Claude Code executor " +
-          "(`claude -p` runs non-interactively with no operator approval channel); use the Codex or " +
-          "OpenCode executor for operator-gated runs.",
+        `executionSafetyMode=operator_gated is only supported with the Codex executor (guaranteed ` +
+          `non-interactive OS sandbox); the ${kind} executor cannot be reliably gated. Use the Codex executor ` +
+          `for operator-gated runs, or executionSafetyMode=unsandboxed_autonomous.`,
       );
     }
   }

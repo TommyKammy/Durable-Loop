@@ -32,8 +32,6 @@ import type {
 } from "../core/types";
 import { resolveExecutorTurnTimeoutMinutes } from "../core/config-types";
 import {
-  buildOpenCodePermissionArgs,
-  buildOpenCodePermissionEnv,
   createExecutorAgentRunner,
   runExecutorCliCommand,
   type ExecutorTurnResult,
@@ -96,9 +94,12 @@ export function buildOpenCodeArgs(
     args.push("--session", sessionId);
   }
 
-  // Permissions posture: gated on executionSafetyMode. operator_gated fails
-  // closed for OpenCode (no verified CLI ask/deny flag); autonomous skips prompts.
-  args.push(...buildOpenCodePermissionArgs(config));
+  // OpenCode runs autonomously: operator_gated is rejected at config load
+  // (config-validation), because OpenCode's permission enforcement is layered on
+  // extensible, overridable config (agents/OPENCODE_PERMISSION/custom tools/
+  // plugins/MCP startup) that the supervisor cannot reliably gate. Only the Codex
+  // executor's OS sandbox provides a guaranteed non-interactive gate.
+  args.push("--dangerously-skip-permissions");
 
   // Workspace directory
   args.push("--dir", workspacePath);
@@ -167,8 +168,6 @@ export const runOpenCodeTurn: RunExecutorTurnFn = async (
     env: {
       ...process.env,
       CI: "1",
-      // operator_gated injects a restrictive OPENCODE_CONFIG_CONTENT deny policy.
-      ...buildOpenCodePermissionEnv(config),
     },
   });
 };

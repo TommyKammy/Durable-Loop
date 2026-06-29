@@ -52,23 +52,25 @@ test("updateSetupConfig migrates a legacy codexBinary even when an unrelated fie
   assert.equal("codexBinary" in written, false);
 });
 
-test("updateSetupConfig rejects switching a Claude config to operator_gated before persisting", async () => {
+test("updateSetupConfig rejects switching a non-Codex config to operator_gated before persisting", async () => {
   // The prospective document must be validated before write, so the saved config
-  // can never be one the next supervisor load would reject.
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "setup-write-claude-gated-"));
-  const configPath = path.join(dir, "supervisor.config.json");
-  const original = { executorBinary: "/usr/bin/claude", repoPath: "/repo" };
-  await fs.writeFile(configPath, JSON.stringify(original), "utf8");
+  // can never be one the next supervisor load would reject. Only Codex provides a
+  // guaranteed gate; both non-Codex executors fail closed.
+  for (const binary of ["/usr/bin/claude", "/usr/bin/opencode"]) {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "setup-write-gated-"));
+    const configPath = path.join(dir, "supervisor.config.json");
+    await fs.writeFile(configPath, JSON.stringify({ executorBinary: binary, repoPath: "/repo" }), "utf8");
 
-  await assert.rejects(
-    updateSetupConfig({
-      configPath,
-      changes: { executionSafetyMode: "operator_gated" } as unknown as SetupConfigChanges,
-    }),
-    /operator_gated is not supported with the Claude Code executor/,
-  );
+    await assert.rejects(
+      updateSetupConfig({
+        configPath,
+        changes: { executionSafetyMode: "operator_gated" } as unknown as SetupConfigChanges,
+      }),
+      /operator_gated is only supported with the Codex executor/,
+    );
 
-  // The on-disk config is unchanged (no operator_gated persisted).
-  const after = JSON.parse(await fs.readFile(configPath, "utf8")) as Record<string, unknown>;
-  assert.equal("executionSafetyMode" in after, false);
+    // The on-disk config is unchanged (no operator_gated persisted).
+    const after = JSON.parse(await fs.readFile(configPath, "utf8")) as Record<string, unknown>;
+    assert.equal("executionSafetyMode" in after, false);
+  }
 });

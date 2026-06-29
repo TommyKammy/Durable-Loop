@@ -3075,7 +3075,7 @@ test("updateSetupConfig accepts trust posture through the setup-owned write surf
   assert.equal(result.readiness.trustPosture.warning, null);
 });
 
-test("loadConfig rejects operator_gated with the Claude executor and accepts Codex/OpenCode", async (t) => {
+test("loadConfig allows operator_gated only with the Codex executor (non-Codex fails closed)", async (t) => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-supervisor-config-gated-executor-"));
   t.after(async () => {
     await fs.rm(tempDir, { recursive: true, force: true });
@@ -3100,14 +3100,11 @@ test("loadConfig rejects operator_gated with the Claude executor and accepts Cod
   const opencodePath = await write("opencode.config.json", "/usr/bin/opencode");
   const codexPath = await write("codex.config.json", "/usr/bin/codex");
 
-  // Claude `claude -p` has no non-interactive approval channel — rejected at load
-  // (before the daemon constructs the executor) rather than crashing later.
-  assert.throws(
-    () => loadConfig(claudePath),
-    /operator_gated is not supported with the Claude Code executor/,
-  );
-  // Codex (sandbox) and OpenCode (injected deny policy) remain valid.
-  assert.doesNotThrow(() => loadConfig(opencodePath));
+  // Only the Codex executor provides a guaranteed non-interactive sandbox; both
+  // non-Codex executors fail closed at load (before the daemon constructs the
+  // executor) rather than ship a config-injected gate that can be bypassed.
+  assert.throws(() => loadConfig(claudePath), /operator_gated is only supported with the Codex executor/);
+  assert.throws(() => loadConfig(opencodePath), /operator_gated is only supported with the Codex executor/);
   assert.doesNotThrow(() => loadConfig(codexPath));
 });
 

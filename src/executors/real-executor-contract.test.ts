@@ -250,8 +250,8 @@ describe("CLI arg construction", () => {
     const fresh = buildOpenCodeArgs(createConfig(), "/ws", "PROMPT", "implementing");
     assert.equal(fresh.includes("--session"), false);
 
-    // operator_gated omits the bypass flag so OpenCode's own opencode.json
-    // allow/ask/deny rules govern.
+    // operator_gated omits the bypass flag and adds --pure (no plugin startup);
+    // the injected deny policy is the gate.
     const gated = buildOpenCodeArgs(
       createConfig({ executionSafetyMode: "operator_gated" }),
       "/ws",
@@ -259,6 +259,7 @@ describe("CLI arg construction", () => {
       "implementing",
     );
     assert.equal(gated.includes("--dangerously-skip-permissions"), false);
+    assert.ok(gated.includes("--pure"), "operator_gated must disable plugin startup via --pure");
   });
 
   test("ClaudeCodeExecutor builds correct CLI args", () => {
@@ -276,11 +277,12 @@ describe("CLI arg construction", () => {
     assert.equal(fresh.includes("--resume"), false);
   });
 
-  test("buildOpenCodePermissionArgs omits the bypass flag only when operator-gated", () => {
+  test("buildOpenCodePermissionArgs swaps the bypass flag for --pure when operator-gated", () => {
     assert.deepEqual(buildOpenCodePermissionArgs({ executionSafetyMode: "unsandboxed_autonomous" }), [
       "--dangerously-skip-permissions",
     ]);
-    assert.deepEqual(buildOpenCodePermissionArgs({ executionSafetyMode: "operator_gated" }), []);
+    // operator_gated omits the bypass flag and disables plugin startup.
+    assert.deepEqual(buildOpenCodePermissionArgs({ executionSafetyMode: "operator_gated" }), ["--pure"]);
   });
 
   test("buildOpenCodePermissionEnv injects a wildcard deny policy only when operator-gated", () => {
@@ -320,6 +322,23 @@ describe("CLI arg construction", () => {
     assert.equal(merged.permission.read, "deny", "a stricter operator deny is preserved (deny wins)");
     assert.equal(merged.agent.build.model, "x", "agent non-permission settings preserved");
     assert.equal("permission" in merged.agent.build, false, "per-agent permission override stripped");
+  });
+
+  test("buildOpenCodePermissionEnv folds in granular, legacy-tools, and inherited OPENCODE_PERMISSION denies", () => {
+    // A granular operator object on a hard-denied tool must NOT re-allow it
+    // (no catch-all); legacy `tools: false` and an inherited OPENCODE_PERMISSION
+    // deny must also be honored (deny wins).
+    const existing = JSON.stringify({ permission: { bash: { "rm *": "deny" } }, tools: { glob: false } });
+    const inherited = JSON.stringify({ list: "deny" });
+    const env = buildOpenCodePermissionEnv({ executionSafetyMode: "operator_gated" }, existing, inherited);
+    const cfg = JSON.parse(env.OPENCODE_CONFIG_CONTENT as string) as { permission: Record<string, unknown>; tools?: unknown };
+    assert.equal(cfg.permission.bash, "deny", "granular operator object must not re-allow a hard-denied tool");
+    assert.equal(cfg.permission.glob, "deny", "legacy tools:false must become a deny");
+    assert.equal(cfg.permission.list, "deny", "inherited OPENCODE_PERMISSION deny must be folded in");
+    assert.equal("tools" in cfg, false, "legacy tools field is dropped after folding into permission");
+    // The exported OPENCODE_PERMISSION carries the same merged denies.
+    const envPerm = JSON.parse(env.OPENCODE_PERMISSION as string) as Record<string, unknown>;
+    assert.equal(envPerm.list, "deny");
   });
 
   test("CodexExecutor builds correct CLI args (via the Codex policy builders it delegates to)", () => {

@@ -39,9 +39,13 @@ type OpenCodePermissionValue = "allow" | "deny" | Record<string, "allow" | "deny
  *  - Agent-level `permission` takes precedence over this top-level policy, so a
  *    host/plugin that forces an agent's `permission` to `allow` can weaken it.
  *  - A repo/user custom tool (`.opencode/tools/*`) reusing a built-in name such
- *    as `read`/`grep`/`glob` takes precedence over the built-in and executes
+ *    as `read`/`glob`/`list` takes precedence over the built-in and executes
  *    arbitrary code; OpenCode exposes no injectable switch to disable custom
  *    tools, so an allowed name can still be shadowed.
+ *  - Local MCP `command` servers configured in the repo start at OpenCode
+ *    startup, before any tool permission is evaluated, so repo-controlled code
+ *    can run regardless of this policy. (`--pure` disables `.opencode/plugins`
+ *    startup, but not local MCP server startup.)
  */
 const OPENCODE_OPERATOR_GATED_PERMISSION: Record<string, OpenCodePermissionValue> = {
   "*": "deny",
@@ -74,7 +78,11 @@ const OPENCODE_OPERATOR_GATED_PERMISSION: Record<string, OpenCodePermissionValue
 export function buildOpenCodePermissionArgs(
   config: Pick<SupervisorConfig, "executionSafetyMode">,
 ): string[] {
-  return config.executionSafetyMode === "operator_gated" ? [] : ["--dangerously-skip-permissions"];
+  // operator_gated: omit the bypass flag (the injected deny policy is the gate)
+  // and add `--pure` so repo `.opencode/plugins` are not loaded/executed at
+  // startup. (Local MCP server `command` startup is not fully closeable via
+  // injection — see the residual note on OPENCODE_OPERATOR_GATED_PERMISSION.)
+  return config.executionSafetyMode === "operator_gated" ? ["--pure"] : ["--dangerously-skip-permissions"];
 }
 
 /** Drop per-agent `permission`/`tools` overrides so a default agent (e.g. Build) cannot re-allow denied tools. */
@@ -94,83 +102,111 @@ function stripAgentPermissionOverrides(base: Record<string, unknown>): Record<st
   return { ...base, agent: agents };
 }
 
+function safeParsePermissionSource(value: string | undefined): unknown {
+  if (!value || value.trim() === "") {
+    return undefined;
+  }
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * Merge our gate with an operator-supplied `permission`, with DENY always
- * winning so a stricter operator rule (e.g. denying `read` entirely or extra
- * `.env`/secret patterns) is preserved while our denies are never relaxed.
+ * Build the gated permission map: our deny gate, with every operator DENY signal
+ * folded in (deny always wins) from the inline `permission`, the legacy `tools`
+ * field (`false` = deny), and an inherited `OPENCODE_PERMISSION`. Our hard denies
+ * are absolute — an operator granular object on a tool we already deny keeps the
+ * deny (a granular object without a catch-all would otherwise re-allow
+ * non-matching commands).
  */
-function mergeOperatorDenies(
-  gate: Record<string, OpenCodePermissionValue>,
-  operatorPermission: unknown,
+function buildGatedPermission(
+  basePermission: unknown,
+  legacyTools: unknown,
+  inheritedPermission: unknown,
 ): Record<string, OpenCodePermissionValue> | "deny" {
-  if (operatorPermission === "deny") {
+  if (basePermission === "deny" || inheritedPermission === "deny") {
     return "deny"; // operator denies everything — strictly stronger than our gate
   }
-  if (!operatorPermission || typeof operatorPermission !== "object") {
-    return { ...gate };
-  }
-  const result: Record<string, OpenCodePermissionValue> = { ...gate };
-  for (const [tool, value] of Object.entries(operatorPermission as Record<string, unknown>)) {
-    if (value === "deny") {
-      result[tool] = "deny";
-    } else if (value && typeof value === "object" && !Array.isArray(value)) {
-      const mine = typeof result[tool] === "object" ? (result[tool] as Record<string, "allow" | "deny">) : {};
-      const merged: Record<string, "allow" | "deny"> = { ...mine };
-      for (const [pattern, action] of Object.entries(value as Record<string, unknown>)) {
-        if (action === "deny") {
-          merged[pattern] = "deny"; // keep operator deny patterns
-        }
-      }
-      result[tool] = merged;
+  const result: Record<string, OpenCodePermissionValue> = { ...OPENCODE_OPERATOR_GATED_PERMISSION };
+
+  const foldDenies = (perm: unknown): void => {
+    if (!perm || typeof perm !== "object" || Array.isArray(perm)) {
+      return;
     }
-    // An operator "allow" never overrides our deny.
+    for (const [tool, value] of Object.entries(perm as Record<string, unknown>)) {
+      if (value === "deny") {
+        result[tool] = "deny";
+      } else if (value && typeof value === "object" && !Array.isArray(value)) {
+        if (result[tool] === "deny") {
+          continue; // our hard deny stays absolute regardless of the operator's granular object
+        }
+        const mine = typeof result[tool] === "object" ? (result[tool] as Record<string, "allow" | "deny">) : {};
+        const merged: Record<string, "allow" | "deny"> = { ...mine };
+        for (const [pattern, action] of Object.entries(value as Record<string, unknown>)) {
+          if (action === "deny") {
+            merged[pattern] = "deny";
+          }
+        }
+        result[tool] = merged;
+      }
+      // An operator "allow" never relaxes our deny.
+    }
+  };
+  foldDenies(basePermission);
+  foldDenies(inheritedPermission);
+
+  // Legacy `tools: { x: false }` disables a tool — fold into a deny.
+  if (legacyTools && typeof legacyTools === "object" && !Array.isArray(legacyTools)) {
+    for (const [tool, enabled] of Object.entries(legacyTools as Record<string, unknown>)) {
+      if (enabled === false) {
+        result[tool] = "deny";
+      }
+    }
   }
   return result;
 }
 
 /**
  * Environment overrides enforcing the OpenCode permission posture under
- * `operator_gated`.
- *
- * OpenCode's defaults are permissive, so the gate is injected on three fronts so
- * it cannot be re-opened from ambient config:
- *  - `OPENCODE_CONFIG_CONTENT`: our policy, MERGED into any existing inline
- *    config (provider/model/MCP settings preserved), with operator `permission`
- *    denies kept (deny wins) and per-agent permission/tools overrides stripped.
- *  - `OPENCODE_PERMISSION`: overwritten with our policy so an inherited
- *    `OPENCODE_PERMISSION={"bash":"allow"}` from the supervisor's shell cannot
+ * `operator_gated`. The gate is injected on multiple fronts so it cannot be
+ * re-opened from ambient config:
+ *  - `OPENCODE_CONFIG_CONTENT`: our policy MERGED into any existing inline config
+ *    (provider/model/MCP settings preserved), with operator `permission`/legacy
+ *    `tools` denies folded in (deny wins) and per-agent permission/tools
+ *    overrides stripped.
+ *  - `OPENCODE_PERMISSION`: overwritten with the same policy (operator denies in
+ *    an inherited value are folded in first) so a permissive shell value cannot
  *    re-enable dangerous tools.
  *
- * `deny` is a static, non-interactive block (no approval prompt to hang a
- * headless `opencode run`).
+ * `deny` is a static, non-interactive block (no prompt to hang a headless run).
  *
- * RESIDUAL RISK (documented on {@link OPENCODE_OPERATOR_GATED_PERMISSION}):
- * agent-level overrides forced by a plugin, and repo custom tools that shadow an
- * allowed built-in name, cannot be closed by injection. Only the Codex executor
- * (OS sandbox) is a guaranteed non-interactive gate.
+ * RESIDUAL RISK (documented on {@link OPENCODE_OPERATOR_GATED_PERMISSION}): repo
+ * custom tools shadowing an allowed built-in name, plugin-forced agent-level
+ * overrides, and local MCP `command` servers that execute at startup before any
+ * tool permission is evaluated, cannot be closed by injection. Only the Codex
+ * executor (OS sandbox) is a guaranteed non-interactive gate.
  */
 export function buildOpenCodePermissionEnv(
   config: Pick<SupervisorConfig, "executionSafetyMode">,
   existingConfigContent: string | undefined = process.env.OPENCODE_CONFIG_CONTENT,
+  existingPermission: string | undefined = process.env.OPENCODE_PERMISSION,
 ): NodeJS.ProcessEnv {
   if (config.executionSafetyMode !== "operator_gated") {
     return {};
   }
 
-  let base: Record<string, unknown> = {};
-  if (existingConfigContent && existingConfigContent.trim() !== "") {
-    try {
-      const parsed = JSON.parse(existingConfigContent) as unknown;
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        base = parsed as Record<string, unknown>;
-      }
-    } catch {
-      // Malformed existing inline config: fall back to our policy alone.
-    }
-  }
+  const parsedBase = safeParsePermissionSource(existingConfigContent);
+  const base: Record<string, unknown> =
+    parsedBase && typeof parsedBase === "object" && !Array.isArray(parsedBase)
+      ? (parsedBase as Record<string, unknown>)
+      : {};
 
-  const permission = mergeOperatorDenies(OPENCODE_OPERATOR_GATED_PERMISSION, base.permission);
-  const merged = { ...stripAgentPermissionOverrides(base), permission };
+  const permission = buildGatedPermission(base.permission, base.tools, safeParsePermissionSource(existingPermission));
+  const strippedBase = stripAgentPermissionOverrides(base);
+  delete strippedBase.tools; // legacy `tools` denies have been folded into `permission`
+  const merged = { ...strippedBase, permission };
 
   return {
     OPENCODE_CONFIG_CONTENT: JSON.stringify(merged),

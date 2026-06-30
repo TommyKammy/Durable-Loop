@@ -41,9 +41,7 @@ import {
   latestReviewComment,
   latestReviewCommentAuthorIsAllowedBot,
 } from "./review-thread-reporting";
-import {
-  hasCodexConnectorFindingReviewComment,
-} from "./codex-connector-review-policy";
+import { hasProviderFindingReviewComment } from "./review-providers/dispatch";
 import {
   buildPreservedCodexConnectorManualReviewChurnPatch,
   buildPreservedCodexConnectorManualReviewChurnReason,
@@ -191,13 +189,13 @@ function hasOnlyOutdatedConfiguredBotResidue(
     configuredThreads.every(
       (thread) =>
         thread.isOutdated &&
-        (latestReviewCommentAuthorIsAllowedBot(config, thread) || operatorAcknowledgedCodexResidue(thread)),
+        (latestReviewCommentAuthorIsAllowedBot(config, thread) || operatorAcknowledgedCodexResidue(config, thread)),
     )
   );
 }
 
-function operatorAcknowledgedCodexResidue(thread: ReviewThread): boolean {
-  if (!hasCodexConnectorFindingReviewComment(thread)) {
+function operatorAcknowledgedCodexResidue(config: SupervisorConfig, thread: ReviewThread): boolean {
+  if (!hasProviderFindingReviewComment(config, thread)) {
     return false;
   }
 

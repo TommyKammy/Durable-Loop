@@ -402,6 +402,71 @@ test("staleConfiguredBotReviewThreads treats non-actionable same-head configured
   assert.deepEqual(staleConfiguredBotReviewThreads(config, record, pr, [nonActionableSameHeadThread]), [nonActionableSameHeadThread]);
 });
 
+test("staleConfiguredBotReviewThreads trusts an explicit no-actionable signal over generic must-fix keyword heuristics on stale bot comments", () => {
+  // Regression guard: a non-Codex provider's generic must-fix heuristic scans for the
+  // latest bot comment regardless of whether a human has since superseded it. When the
+  // configured bot's own current-head signal already says nothing is actionable, that
+  // heuristic must not override it just because an older, already-handled bot comment
+  // happens to contain a must-fix keyword like "bug".
+  const config = createConfig({
+    reviewBotLogins: ["copilot-pull-request-reviewer"],
+  });
+  const pr: Pick<
+    GitHubPullRequest,
+    "headRefOid" | "configuredBotCurrentHeadObservedAt" | "configuredBotCurrentHeadStatusState" | "configuredBotTopLevelReviewStrength"
+  > = {
+    headRefOid: "head123",
+    configuredBotCurrentHeadObservedAt: "2026-03-11T00:15:00Z",
+    configuredBotCurrentHeadStatusState: "SUCCESS",
+    configuredBotTopLevelReviewStrength: null,
+  };
+  const record: Pick<
+    IssueRunRecord,
+    | "processed_review_thread_ids"
+    | "processed_review_thread_fingerprints"
+    | "last_head_sha"
+    | "review_follow_up_head_sha"
+    | "review_follow_up_remaining"
+  > = {
+    processed_review_thread_ids: ["thread-1@head123"],
+    processed_review_thread_fingerprints: ["thread-1@head123#comment-1"],
+    last_head_sha: "head123",
+    review_follow_up_head_sha: null,
+    review_follow_up_remaining: 0,
+  };
+  const nonActionableSameHeadThreadWithStaleKeyword = createReviewThread({
+    comments: {
+      nodes: [
+        {
+          id: "comment-1",
+          body: "This looks like a bug in the error handling.",
+          createdAt: "2026-03-11T00:00:00Z",
+          url: "https://example.test/pr/44#discussion_r1",
+          author: {
+            login: "copilot-pull-request-reviewer",
+            typeName: "Bot",
+          },
+        },
+        {
+          id: "comment-2",
+          body: "Handled manually elsewhere.",
+          createdAt: "2026-03-11T00:10:00Z",
+          url: "https://example.test/pr/44#discussion_r2",
+          author: {
+            login: "octocat",
+            typeName: "User",
+          },
+        },
+      ],
+    },
+  });
+
+  assert.deepEqual(
+    staleConfiguredBotReviewThreads(config, record, pr, [nonActionableSameHeadThreadWithStaleKeyword]),
+    [nonActionableSameHeadThreadWithStaleKeyword],
+  );
+});
+
 test("codexConnectorMustFixReviewThreads tracks unresolved P1 findings and reports their severity", () => {
   const p1Thread = createReviewThread({
     comments: {

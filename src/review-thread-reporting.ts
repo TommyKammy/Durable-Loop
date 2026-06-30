@@ -347,14 +347,23 @@ export function staleConfiguredBotReviewThreads(
   >,
   reviewThreads: ReviewThread[],
 ): ReviewThread[] {
-  const configuredThreads = hasExplicitCurrentHeadNoActionableConfiguredBotSignal(pr)
+  const explicitNoActionableSignal = hasExplicitCurrentHeadNoActionableConfiguredBotSignal(pr);
+  const configuredThreads = explicitNoActionableSignal
     ? configuredBotReviewThreads(config, reviewThreads)
     : actionableConfiguredBotReviewThreads(config, reviewThreads);
   if (configuredThreads.length === 0) {
     return [];
   }
 
-  if (mustFixReviewThreads(config, configuredThreads).length > 0) {
+  // When the explicit signal already says the current head has nothing actionable,
+  // only re-derive must-fix-ness from threads whose latest comment is still the bot's
+  // own (i.e. genuinely live on the current head). Otherwise a provider's keyword
+  // heuristic can match an older, already-superseded bot comment and incorrectly
+  // override the explicit signal.
+  const mustFixCandidateThreads = explicitNoActionableSignal
+    ? actionableConfiguredBotReviewThreads(config, reviewThreads)
+    : configuredThreads;
+  if (mustFixReviewThreads(config, mustFixCandidateThreads).length > 0) {
     return [];
   }
 

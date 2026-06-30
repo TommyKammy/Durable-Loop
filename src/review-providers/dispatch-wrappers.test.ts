@@ -20,6 +20,7 @@ import {
   codexConnectorMustFixReviewThreads,
   hasCodexConnectorFindingReviewComment,
   latestCodexConnectorPSeverity,
+  latestCodexConnectorReviewCommentFingerprint,
 } from "../codex-connector-review-policy";
 
 function createThread(overrides: Partial<ReviewThread> = {}): ReviewThread {
@@ -163,6 +164,30 @@ test("providerCommentFingerprint with codex config returns null for non-codex th
   });
   const fingerprint = providerCommentFingerprint(createCodexConfig(), thread);
   assert.equal(fingerprint, null);
+});
+
+test("providerCommentFingerprint under a codex config is 1:1 with latestCodexConnectorReviewCommentFingerprint", () => {
+  // Parity guard for the #19 routing in pull-request-state-codex-residue-policy.ts.
+  const codexThread = createThread();
+  const nonCodexThread = createThread({
+    comments: {
+      nodes: [
+        {
+          id: "c1",
+          body: "test",
+          createdAt: "2025-01-01T00:00:00Z",
+          url: "u",
+          author: { login: "random-user", typeName: "User" },
+        },
+      ],
+    },
+  });
+  for (const thread of [codexThread, nonCodexThread]) {
+    assert.equal(
+      providerCommentFingerprint(createCodexConfig(), thread),
+      latestCodexConnectorReviewCommentFingerprint(thread),
+    );
+  }
 });
 
 test("providerExtractSeverity with codex config returns P1", () => {

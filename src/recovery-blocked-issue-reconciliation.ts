@@ -612,7 +612,7 @@ export async function reconcileRecoverableBlockedIssueStatesInModule(
         });
       const unchangedSameHeadCodexConnectorChurnBlocker =
         shouldKeepCodexConnectorChurnBlockQuiescent &&
-        sameHeadCodexConnectorChurnBlockerUnchanged(record, effectiveCurrentCodexConnectorReviewThreads);
+        sameHeadCodexConnectorChurnBlockerUnchanged(config, record, effectiveCurrentCodexConnectorReviewThreads);
       const effectiveRecoverySuppression =
         shouldKeepCodexConnectorChurnBlockQuiescent && !unchangedSameHeadCodexConnectorChurnBlocker
           ? { shouldSuppress: false, progressSummary: "same_review_thread_guidance_changed" }

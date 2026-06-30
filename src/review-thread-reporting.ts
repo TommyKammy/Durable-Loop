@@ -405,10 +405,18 @@ export function stalledConfiguredBotReviewThreads(
     return staleThreads;
   }
 
-  const configuredThreads = hasExplicitCurrentHeadNoActionableConfiguredBotSignal(pr)
+  const explicitNoActionableSignal = hasExplicitCurrentHeadNoActionableConfiguredBotSignal(pr);
+  const configuredThreads = explicitNoActionableSignal
     ? configuredBotReviewThreads(config, reviewThreads)
     : actionableConfiguredBotReviewThreads(config, reviewThreads);
-  const mustFixThreads = mustFixReviewThreads(config, configuredThreads);
+  // Mirrors the staleConfiguredBotReviewThreads narrowing above: don't let a generic
+  // provider's keyword heuristic resurrect an older, human-superseded bot comment as
+  // still must-fix once the explicit signal says nothing is actionable on the current
+  // head.
+  const mustFixCandidateThreads = explicitNoActionableSignal
+    ? actionableConfiguredBotReviewThreads(config, reviewThreads)
+    : configuredThreads;
+  const mustFixThreads = mustFixReviewThreads(config, mustFixCandidateThreads);
   if (mustFixThreads.length === 0 || pendingBotReviewThreads(config, record, pr, configuredThreads).length > 0) {
     return [];
   }

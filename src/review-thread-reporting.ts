@@ -11,11 +11,10 @@ import {
   type ConfiguredBotReviewThreadCluster,
 } from "./codex-connector-review-churn";
 import {
-  codexConnectorMustFixReviewThreads,
   isSoftenedCodexConnectorP3Thread,
-  latestCodexConnectorReviewCommentFingerprint,
   latestCodexConnectorPSeverity,
 } from "./codex-connector-review-policy";
+import { mustFixReviewThreads, providerCommentFingerprint } from "./review-providers/dispatch";
 
 export {
   buildCodexConnectorP2P3PolicyDiagnostic,
@@ -302,7 +301,7 @@ export function configuredBotReviewFollowUpState(
     return "exhausted";
   }
 
-  if (codexConnectorMustFixReviewThreads(unresolvedActionableThreads).length > 0) {
+  if (mustFixReviewThreads(config, unresolvedActionableThreads).length > 0) {
     return "inactive";
   }
 
@@ -355,7 +354,7 @@ export function staleConfiguredBotReviewThreads(
     return [];
   }
 
-  if (codexConnectorMustFixReviewThreads(configuredThreads).length > 0) {
+  if (mustFixReviewThreads(config, configuredThreads).length > 0) {
     return [];
   }
 
@@ -400,7 +399,7 @@ export function stalledConfiguredBotReviewThreads(
   const configuredThreads = hasExplicitCurrentHeadNoActionableConfiguredBotSignal(pr)
     ? configuredBotReviewThreads(config, reviewThreads)
     : actionableConfiguredBotReviewThreads(config, reviewThreads);
-  const mustFixThreads = codexConnectorMustFixReviewThreads(configuredThreads);
+  const mustFixThreads = mustFixReviewThreads(config, configuredThreads);
   if (mustFixThreads.length === 0 || pendingBotReviewThreads(config, record, pr, configuredThreads).length > 0) {
     return [];
   }
@@ -411,7 +410,7 @@ export function stalledConfiguredBotReviewThreads(
       pr,
       thread,
       1,
-      latestCodexConnectorReviewCommentFingerprint(thread),
+      providerCommentFingerprint(config, thread),
     ),
   );
   if (exhaustedMustFixThreads.length === mustFixThreads.length) {
@@ -422,7 +421,7 @@ export function stalledConfiguredBotReviewThreads(
     record.last_tracked_pr_repeat_failure_decision === "stop_no_progress" &&
     mustFixThreads.every((thread) =>
       hasProcessedReviewThread(record, pr, thread) ||
-      hasProcessedReviewThread(record, pr, thread, latestCodexConnectorReviewCommentFingerprint(thread)),
+      hasProcessedReviewThread(record, pr, thread, providerCommentFingerprint(config, thread)),
     );
   return legacyRepeatStopExhausted ? mustFixThreads : [];
 }

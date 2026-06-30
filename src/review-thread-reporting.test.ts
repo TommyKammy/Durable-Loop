@@ -15,7 +15,9 @@ import {
   evaluateCodexConnectorConvergencePolicy,
   formatEffectiveReviewThreadDiagnosticsLine,
   staleConfiguredBotReviewThreads,
+  stalledConfiguredBotReviewThreads,
 } from "./review-thread-reporting";
+import { reviewLoopRetryFingerprint } from "./review-handling";
 import { GitHubPullRequest, IssueRunRecord, ReviewThread, SupervisorConfig } from "./core/types";
 
 function createConfig(overrides: Partial<SupervisorConfig> = {}): SupervisorConfig {
@@ -400,6 +402,180 @@ test("staleConfiguredBotReviewThreads treats non-actionable same-head configured
   });
 
   assert.deepEqual(staleConfiguredBotReviewThreads(config, record, pr, [nonActionableSameHeadThread]), [nonActionableSameHeadThread]);
+});
+
+test("staleConfiguredBotReviewThreads trusts an explicit no-actionable signal over generic must-fix keyword heuristics on stale bot comments", () => {
+  // Regression guard: a non-Codex provider's generic must-fix heuristic scans for the
+  // latest bot comment regardless of whether a human has since superseded it. When the
+  // configured bot's own current-head signal already says nothing is actionable, that
+  // heuristic must not override it just because an older, already-handled bot comment
+  // happens to contain a must-fix keyword like "bug".
+  const config = createConfig({
+    reviewBotLogins: ["copilot-pull-request-reviewer"],
+  });
+  const pr: Pick<
+    GitHubPullRequest,
+    "headRefOid" | "configuredBotCurrentHeadObservedAt" | "configuredBotCurrentHeadStatusState" | "configuredBotTopLevelReviewStrength"
+  > = {
+    headRefOid: "head123",
+    configuredBotCurrentHeadObservedAt: "2026-03-11T00:15:00Z",
+    configuredBotCurrentHeadStatusState: "SUCCESS",
+    configuredBotTopLevelReviewStrength: null,
+  };
+  const record: Pick<
+    IssueRunRecord,
+    | "processed_review_thread_ids"
+    | "processed_review_thread_fingerprints"
+    | "last_head_sha"
+    | "review_follow_up_head_sha"
+    | "review_follow_up_remaining"
+  > = {
+    processed_review_thread_ids: ["thread-1@head123"],
+    processed_review_thread_fingerprints: ["thread-1@head123#comment-1"],
+    last_head_sha: "head123",
+    review_follow_up_head_sha: null,
+    review_follow_up_remaining: 0,
+  };
+  const nonActionableSameHeadThreadWithStaleKeyword = createReviewThread({
+    comments: {
+      nodes: [
+        {
+          id: "comment-1",
+          body: "This looks like a bug in the error handling.",
+          createdAt: "2026-03-11T00:00:00Z",
+          url: "https://example.test/pr/44#discussion_r1",
+          author: {
+            login: "copilot-pull-request-reviewer",
+            typeName: "Bot",
+          },
+        },
+        {
+          id: "comment-2",
+          body: "Handled manually elsewhere.",
+          createdAt: "2026-03-11T00:10:00Z",
+          url: "https://example.test/pr/44#discussion_r2",
+          author: {
+            login: "octocat",
+            typeName: "User",
+          },
+        },
+      ],
+    },
+  });
+
+  assert.deepEqual(
+    staleConfiguredBotReviewThreads(config, record, pr, [nonActionableSameHeadThreadWithStaleKeyword]),
+    [nonActionableSameHeadThreadWithStaleKeyword],
+  );
+});
+
+test("stalledConfiguredBotReviewThreads trusts an explicit no-actionable signal over generic must-fix keyword heuristics on stale bot comments", () => {
+  // Regression guard mirroring the staleConfiguredBotReviewThreads case above, but for
+  // the path stalledConfiguredBotReviewThreads takes once staleConfiguredBotReviewThreads
+  // bails out early because a separate, genuinely actionable thread is mid-follow-up
+  // ("eligible"). Without narrowing the must-fix recheck to actionable threads, an older,
+  // human-superseded bot comment containing a keyword like "bug" gets reported as a
+  // stalled must-fix once its retry budget is exhausted, overriding the explicit
+  // no-actionable signal.
+  const config = createConfig({
+    reviewBotLogins: ["copilot-pull-request-reviewer"],
+  });
+  const pr: Pick<
+    GitHubPullRequest,
+    "number" | "headRefOid" | "configuredBotCurrentHeadObservedAt" | "configuredBotCurrentHeadStatusState" | "configuredBotTopLevelReviewStrength"
+  > = {
+    number: 44,
+    headRefOid: "head123",
+    configuredBotCurrentHeadObservedAt: "2026-03-11T00:15:00Z",
+    configuredBotCurrentHeadStatusState: "SUCCESS",
+    configuredBotTopLevelReviewStrength: null,
+  };
+  const actionableNonMustFixThread = createReviewThread({
+    id: "thread-actionable",
+    comments: {
+      nodes: [
+        {
+          id: "comment-actionable",
+          body: "Consider renaming this helper for clarity.",
+          createdAt: "2026-03-11T00:05:00Z",
+          url: "https://example.test/pr/44#discussion_r3",
+          author: {
+            login: "copilot-pull-request-reviewer",
+            typeName: "Bot",
+          },
+        },
+      ],
+    },
+  });
+  const nonActionableStaleResidueThread = createReviewThread({
+    id: "thread-stale-residue",
+    comments: {
+      nodes: [
+        {
+          id: "comment-stale-bot",
+          body: "This looks like a bug in the error handling.",
+          createdAt: "2026-03-11T00:00:00Z",
+          url: "https://example.test/pr/44#discussion_r1",
+          author: {
+            login: "copilot-pull-request-reviewer",
+            typeName: "Bot",
+          },
+        },
+        {
+          id: "comment-stale-human",
+          body: "Handled manually elsewhere.",
+          createdAt: "2026-03-11T00:10:00Z",
+          url: "https://example.test/pr/44#discussion_r2",
+          author: {
+            login: "octocat",
+            typeName: "User",
+          },
+        },
+      ],
+    },
+  });
+  const record: Pick<
+    IssueRunRecord,
+    | "processed_review_thread_ids"
+    | "processed_review_thread_fingerprints"
+    | "last_head_sha"
+    | "review_follow_up_head_sha"
+    | "review_follow_up_remaining"
+    | "last_tracked_pr_repeat_failure_decision"
+    | "review_loop_retry_state"
+  > = {
+    processed_review_thread_ids: ["thread-actionable"],
+    processed_review_thread_fingerprints: [],
+    last_head_sha: "head123",
+    review_follow_up_head_sha: "head123",
+    review_follow_up_remaining: 1,
+    last_tracked_pr_repeat_failure_decision: null,
+    review_loop_retry_state: [
+      {
+        fingerprint: reviewLoopRetryFingerprint({
+          prNumber: 44,
+          headSha: "head123",
+          threadId: "thread-stale-residue",
+          latestCommentFingerprint: "comment-stale-bot",
+        }),
+        pr_number: 44,
+        head_sha: "head123",
+        thread_id: "thread-stale-residue",
+        latest_comment_fingerprint: "comment-stale-bot",
+        attempts: 1,
+        first_attempted_at: "2026-03-10T00:00:00Z",
+        last_attempted_at: "2026-03-10T00:00:00Z",
+      },
+    ],
+  };
+
+  // Sanity check the test actually reaches the stalled-must-fix path being guarded.
+  assert.deepEqual(staleConfiguredBotReviewThreads(config, record, pr, [actionableNonMustFixThread, nonActionableStaleResidueThread]), []);
+
+  assert.deepEqual(
+    stalledConfiguredBotReviewThreads(config, record, pr, [actionableNonMustFixThread, nonActionableStaleResidueThread]),
+    [],
+  );
 });
 
 test("codexConnectorMustFixReviewThreads tracks unresolved P1 findings and reports their severity", () => {

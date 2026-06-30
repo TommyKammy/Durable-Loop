@@ -11,11 +11,10 @@ import {
   type ConfiguredBotReviewThreadCluster,
 } from "./codex-connector-review-churn";
 import {
-  codexConnectorMustFixReviewThreads,
   isSoftenedCodexConnectorP3Thread,
-  latestCodexConnectorReviewCommentFingerprint,
   latestCodexConnectorPSeverity,
 } from "./codex-connector-review-policy";
+import { mustFixReviewThreads, providerCommentFingerprint } from "./review-providers/dispatch";
 
 export {
   buildCodexConnectorP2P3PolicyDiagnostic,
@@ -302,7 +301,7 @@ export function configuredBotReviewFollowUpState(
     return "exhausted";
   }
 
-  if (codexConnectorMustFixReviewThreads(unresolvedActionableThreads).length > 0) {
+  if (mustFixReviewThreads(config, unresolvedActionableThreads).length > 0) {
     return "inactive";
   }
 
@@ -348,14 +347,23 @@ export function staleConfiguredBotReviewThreads(
   >,
   reviewThreads: ReviewThread[],
 ): ReviewThread[] {
-  const configuredThreads = hasExplicitCurrentHeadNoActionableConfiguredBotSignal(pr)
+  const explicitNoActionableSignal = hasExplicitCurrentHeadNoActionableConfiguredBotSignal(pr);
+  const configuredThreads = explicitNoActionableSignal
     ? configuredBotReviewThreads(config, reviewThreads)
     : actionableConfiguredBotReviewThreads(config, reviewThreads);
   if (configuredThreads.length === 0) {
     return [];
   }
 
-  if (codexConnectorMustFixReviewThreads(configuredThreads).length > 0) {
+  // When the explicit signal already says the current head has nothing actionable,
+  // only re-derive must-fix-ness from threads whose latest comment is still the bot's
+  // own (i.e. genuinely live on the current head). Otherwise a provider's keyword
+  // heuristic can match an older, already-superseded bot comment and incorrectly
+  // override the explicit signal.
+  const mustFixCandidateThreads = explicitNoActionableSignal
+    ? actionableConfiguredBotReviewThreads(config, reviewThreads)
+    : configuredThreads;
+  if (mustFixReviewThreads(config, mustFixCandidateThreads).length > 0) {
     return [];
   }
 
@@ -397,10 +405,18 @@ export function stalledConfiguredBotReviewThreads(
     return staleThreads;
   }
 
-  const configuredThreads = hasExplicitCurrentHeadNoActionableConfiguredBotSignal(pr)
+  const explicitNoActionableSignal = hasExplicitCurrentHeadNoActionableConfiguredBotSignal(pr);
+  const configuredThreads = explicitNoActionableSignal
     ? configuredBotReviewThreads(config, reviewThreads)
     : actionableConfiguredBotReviewThreads(config, reviewThreads);
-  const mustFixThreads = codexConnectorMustFixReviewThreads(configuredThreads);
+  // Mirrors the staleConfiguredBotReviewThreads narrowing above: don't let a generic
+  // provider's keyword heuristic resurrect an older, human-superseded bot comment as
+  // still must-fix once the explicit signal says nothing is actionable on the current
+  // head.
+  const mustFixCandidateThreads = explicitNoActionableSignal
+    ? actionableConfiguredBotReviewThreads(config, reviewThreads)
+    : configuredThreads;
+  const mustFixThreads = mustFixReviewThreads(config, mustFixCandidateThreads);
   if (mustFixThreads.length === 0 || pendingBotReviewThreads(config, record, pr, configuredThreads).length > 0) {
     return [];
   }
@@ -411,7 +427,7 @@ export function stalledConfiguredBotReviewThreads(
       pr,
       thread,
       1,
-      latestCodexConnectorReviewCommentFingerprint(thread),
+      providerCommentFingerprint(config, thread),
     ),
   );
   if (exhaustedMustFixThreads.length === mustFixThreads.length) {
@@ -422,7 +438,7 @@ export function stalledConfiguredBotReviewThreads(
     record.last_tracked_pr_repeat_failure_decision === "stop_no_progress" &&
     mustFixThreads.every((thread) =>
       hasProcessedReviewThread(record, pr, thread) ||
-      hasProcessedReviewThread(record, pr, thread, latestCodexConnectorReviewCommentFingerprint(thread)),
+      hasProcessedReviewThread(record, pr, thread, providerCommentFingerprint(config, thread)),
     );
   return legacyRepeatStopExhausted ? mustFixThreads : [];
 }

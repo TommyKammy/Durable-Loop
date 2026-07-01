@@ -1,6 +1,9 @@
 import { buildCodexConnectorReviewChurnDiagnostic, buildCodexConnectorReviewChurnProgressSummary } from "./codex-connector-review-churn";
 import { migrateLegacyChurnSnapshotKeys } from "./tracked-pr-progress-snapshot-migration";
-import { mustFixReviewThreads, providerCommentFingerprint } from "./review-providers/dispatch";
+import {
+  codexConnectorMustFixReviewThreads,
+  latestCodexConnectorReviewCommentFingerprint,
+} from "./codex-connector-review-policy";
 import type { GitHubPullRequest, IssueRunRecord, PullRequestCheck, ReviewThread, SupervisorConfig } from "./core/types";
 import { truncate } from "./core/utils";
 import { effectiveConfiguredBotReviewThreadsForState } from "./pull-request-state";
@@ -70,10 +73,10 @@ function unresolvedEffectiveReviewThreadIds(reviewThreads: ReviewThread[]): stri
     .sort();
 }
 
-function unresolvedEffectiveReviewThreadFingerprints(config: SupervisorConfig, reviewThreads: ReviewThread[]): string[] {
+function unresolvedEffectiveReviewThreadFingerprints(reviewThreads: ReviewThread[]): string[] {
   return reviewThreads
     .filter((thread) => !thread.isResolved)
-    .map((thread) => `${thread.id}#${providerCommentFingerprint(config, thread) ?? "no-comment"}`)
+    .map((thread) => `${thread.id}#${latestCodexConnectorReviewCommentFingerprint(thread) ?? "no-comment"}`)
     .sort();
 }
 
@@ -98,7 +101,6 @@ function parseProgressSnapshotStringArray(
 }
 
 export function sameHeadCodexConnectorChurnBlockerUnchanged(
-  config: SupervisorConfig,
   record: IssueRunRecord,
   effectiveReviewThreads: ReviewThread[],
 ): boolean {
@@ -124,7 +126,7 @@ export function sameHeadCodexConnectorChurnBlockerUnchanged(
     return true;
   }
 
-  const currentThreadFingerprints = unresolvedEffectiveReviewThreadFingerprints(config, effectiveReviewThreads);
+  const currentThreadFingerprints = unresolvedEffectiveReviewThreadFingerprints(effectiveReviewThreads);
   return (
     previousThreadFingerprints.length === currentThreadFingerprints.length &&
     previousThreadFingerprints.every((fingerprint, index) => fingerprint === currentThreadFingerprints[index])
@@ -138,7 +140,7 @@ export function effectiveCurrentCodexConnectorMustFixBlockers(args: {
   checks: PullRequestCheck[];
   reviewThreads: ReviewThread[];
 }): ReviewThread[] {
-  return mustFixReviewThreads(args.config, effectiveConfiguredBotReviewThreadsForState(
+  return codexConnectorMustFixReviewThreads(effectiveConfiguredBotReviewThreadsForState(
     args.config,
     args.record,
     args.pr,
@@ -180,7 +182,7 @@ export function buildPreservedCodexConnectorChurnProgressSnapshot(args: {
       .map((check) => `${check.name}:${check.bucket}:${check.state}:${check.workflow ?? "none"}`)
       .sort(),
     unresolvedReviewThreadIds: unresolvedEffectiveReviewThreadIds(args.effectiveReviewThreads),
-    unresolvedReviewThreadFingerprints: unresolvedEffectiveReviewThreadFingerprints(args.config, args.effectiveReviewThreads),
+    unresolvedReviewThreadFingerprints: unresolvedEffectiveReviewThreadFingerprints(args.effectiveReviewThreads),
     unresolvedReviewThreadSourceAnchors: args.effectiveReviewThreads
       .map((thread) => `${thread.id}:${thread.path ?? "unknown"}:${thread.line ?? "unknown"}`)
       .sort(),

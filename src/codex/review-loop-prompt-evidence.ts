@@ -5,9 +5,7 @@ import {
 } from "../core/review-providers";
 import { truncate } from "../core/utils";
 import {
-  codexConnectorMustFixReviewThreads,
   isSoftenedCodexConnectorP3Thread,
-  latestCodexConnectorReviewCommentFingerprint,
   latestCodexConnectorReviewCommentNode,
 } from "../codex-connector-review-policy";
 import {
@@ -15,6 +13,7 @@ import {
   reviewLoopRetryAttemptCountForThread,
 } from "../review-handling";
 import { configuredBotReviewThreads } from "../review-thread-reporting";
+import { mustFixReviewThreads, providerCommentFingerprint, providerCommentNode } from "../review-providers/dispatch";
 
 export interface ProviderNeutralReviewLoopEvidenceInput {
   config?: SupervisorConfig;
@@ -36,7 +35,9 @@ export function buildProviderNeutralReviewLoopEvidence(input: ProviderNeutralRev
   const sourceReviewThreads = input.activeReviewThreads ?? input.reviewThreads;
   const configuredThreads = input.config ? configuredBotReviewThreads(input.config, sourceReviewThreads) : [];
   const currentHeadReviewThreads = configuredThreads.filter((thread) => !thread.isResolved && !thread.isOutdated);
-  const codexMustFixThreadIds = new Set(codexConnectorMustFixReviewThreads(currentHeadReviewThreads).map((thread) => thread.id));
+  const providerMustFixThreadIds = new Set(
+    (input.config ? mustFixReviewThreads(input.config, currentHeadReviewThreads) : []).map((thread) => thread.id),
+  );
   const configuredProviderCommentForThread = (thread: ReviewThread): ReviewThread["comments"]["nodes"][number] | null => {
     if (!input.config) {
       return latestReviewComment(thread) ?? null;
@@ -60,12 +61,12 @@ export function buildProviderNeutralReviewLoopEvidence(input: ProviderNeutralRev
     return null;
   };
   const evidenceCommentForThread = (thread: ReviewThread) =>
-    codexMustFixThreadIds.has(thread.id)
-      ? latestCodexConnectorReviewCommentNode(thread) ?? latestReviewComment(thread) ?? null
+    providerMustFixThreadIds.has(thread.id)
+      ? (input.config ? providerCommentNode(input.config, thread) : null) ?? latestReviewComment(thread) ?? null
       : configuredProviderCommentForThread(thread);
   const evidenceCommentFingerprintForThread = (thread: ReviewThread) =>
-    codexMustFixThreadIds.has(thread.id)
-      ? latestCodexConnectorReviewCommentFingerprint(thread) ?? latestReviewThreadCommentFingerprint(thread)
+    providerMustFixThreadIds.has(thread.id)
+      ? (input.config ? providerCommentFingerprint(input.config, thread) : null) ?? latestReviewThreadCommentFingerprint(thread)
       : (evidenceCommentForThread(thread)?.id ?? evidenceCommentForThread(thread)?.createdAt ?? latestReviewThreadCommentFingerprint(thread));
   const evidenceEntries = currentHeadReviewThreads.flatMap((thread) => {
     const evidenceComment = evidenceCommentForThread(thread);

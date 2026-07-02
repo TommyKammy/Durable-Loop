@@ -76,6 +76,7 @@ test("runCodexTurn runs a new Codex exec turn and shapes the result from CLI out
   const workspacePath = path.join(root, "workspace");
   const executorBinary = path.join(root, "fake-codex.sh");
   const argsPath = path.join(root, "args.log");
+  const stdinPath = path.join(root, "stdin.log");
   await fs.mkdir(workspacePath, { recursive: true });
 
   await writeExecutableScript(
@@ -83,6 +84,7 @@ test("runCodexTurn runs a new Codex exec turn and shapes the result from CLI out
     `#!/bin/sh
 set -eu
 printf '%s\n' "$@" > "${argsPath}"
+cat > "${stdinPath}"
 out=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -108,6 +110,7 @@ exit 1
 
   const result = await runCodexTurn(createConfig({ executorBinary }), workspacePath, "prompt body", "implementing");
   const args = (await fs.readFile(argsPath, "utf8")).trim().split("\n");
+  const stdinContent = await fs.readFile(stdinPath, "utf8");
 
   assert.equal(result.exitCode, 1);
   assert.equal(result.sessionId, "thread-new");
@@ -135,7 +138,11 @@ exit 1
   assert.equal(args[6], workspacePath);
   assert.equal(args[7], "-o");
   assert.equal(path.basename(args[8] ?? ""), "last-message.txt");
-  assert.equal(args[9], "prompt body");
+  // The prompt is fed via stdin ("-" instructs Codex to read it from there),
+  // not argv, so it doesn't show up in `ps`/`/proc/<pid>/cmdline`.
+  assert.equal(args[9], "-");
+  assert.equal(args.some((arg) => arg === "prompt body"), false, "the prompt must not appear in argv");
+  assert.equal(stdinContent, "prompt body", "the prompt must arrive intact via stdin");
 });
 
 test("runCodexTurn resumes an existing Codex session without resetting the workspace arg shape", async () => {
@@ -143,6 +150,7 @@ test("runCodexTurn resumes an existing Codex session without resetting the works
   const workspacePath = path.join(root, "workspace");
   const executorBinary = path.join(root, "fake-codex.sh");
   const argsPath = path.join(root, "args.log");
+  const stdinPath = path.join(root, "stdin.log");
   await fs.mkdir(workspacePath, { recursive: true });
 
   await writeExecutableScript(
@@ -150,6 +158,7 @@ test("runCodexTurn resumes an existing Codex session without resetting the works
     `#!/bin/sh
 set -eu
 printf '%s\n' "$@" > "${argsPath}"
+cat > "${stdinPath}"
 printf 'resume stdout\n'
 exit 0
 `,
@@ -157,6 +166,7 @@ exit 0
 
   const result = await runCodexTurn(createConfig({ executorBinary }), workspacePath, "resume prompt", "reproducing", undefined, "session-123");
   const args = (await fs.readFile(argsPath, "utf8")).trim().split("\n");
+  const stdinContent = await fs.readFile(stdinPath, "utf8");
 
   assert.equal(result.exitCode, 0);
   assert.equal(result.sessionId, "session-123");
@@ -174,7 +184,11 @@ exit 0
   assert.equal(args[6], "-o");
   assert.equal(path.basename(args[7] ?? ""), "last-message.txt");
   assert.equal(args[8], "session-123");
-  assert.equal(args[9], "resume prompt");
+  // The prompt is fed via stdin ("-" instructs Codex to read it from there),
+  // not argv, so it doesn't show up in `ps`/`/proc/<pid>/cmdline`.
+  assert.equal(args[9], "-");
+  assert.equal(args.some((arg) => arg === "resume prompt"), false, "the prompt must not appear in argv");
+  assert.equal(stdinContent, "resume prompt", "the prompt must arrive intact via stdin");
   assert.equal(args.includes("-C"), false);
 });
 

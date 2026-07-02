@@ -68,11 +68,14 @@ export function detectClaudeCodeCapabilities(
  * - `--resume <session-id>` for resume (or `--continue` / `-c` for last session)
  * - `--dangerously-skip-permissions` for autonomous operation
  * - `--add-dir <workspace>` for workspace access
+ *
+ * The prompt is deliberately not passed as a positional argument here — it's
+ * fed via stdin instead (`claude -p` reads the prompt from stdin when no
+ * positional prompt is given) so it doesn't show up in `ps`/`/proc/<pid>/cmdline`.
  */
 export function buildClaudeCodeArgs(
   config: SupervisorConfig,
   workspacePath: string,
-  prompt: string,
   state: RunState,
   sessionId?: string | null,
 ): string[] {
@@ -96,17 +99,15 @@ export function buildClaudeCodeArgs(
     args.push("--resume", sessionId);
   }
 
-  // Claude Code runs autonomously: `claude -p` is non-interactive (stdin is not
-  // wired to an operator), so there is no live approval channel. operator_gated is
-  // therefore rejected up front in createExecutor rather than reaching here, so
-  // this executor only ever runs in the autonomous posture.
+  // Claude Code runs autonomously: `claude -p` is non-interactive (stdin carries
+  // the prompt, not an operator's live approval responses), so there is no live
+  // approval channel. operator_gated is therefore rejected up front in
+  // createExecutor rather than reaching here, so this executor only ever runs
+  // in the autonomous posture.
   args.push("--dangerously-skip-permissions");
 
   // Workspace directory access
   args.push("--add-dir", workspacePath);
-
-  // Prompt (positional argument)
-  args.push(prompt);
 
   return args;
 }
@@ -157,7 +158,7 @@ export const runClaudeCodeTurn: RunExecutorTurnFn = async (
   _record,
   sessionId,
 ): Promise<ExecutorTurnResult> => {
-  const args = buildClaudeCodeArgs(config, workspacePath, prompt, state, sessionId);
+  const args = buildClaudeCodeArgs(config, workspacePath, state, sessionId);
   const timeoutMs = resolveExecutorTurnTimeoutMinutes(config) * 60_000;
 
   return runExecutorCliCommand(config.executorBinary, args, {
@@ -165,6 +166,7 @@ export const runClaudeCodeTurn: RunExecutorTurnFn = async (
     timeoutMs,
     sessionId,
     parseJsonOutput: true,
+    stdinInput: prompt,
     env: {
       ...process.env,
       CI: "1",

@@ -344,3 +344,39 @@ test("runCommand timeout errors bound long timeout summaries", async () => {
     },
   );
 });
+
+test("runCommand delivers stdinInput to the child's stdin and closes it", async () => {
+  const result = await runCommand(
+    process.execPath,
+    ["-e", "process.stdin.on('data', (c) => process.stdout.write(c)); process.stdin.on('end', () => process.exit(0));"],
+    { stdinInput: "secret prompt payload" },
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stdout, "secret prompt payload");
+});
+
+test("runCommand without stdinInput leaves the child's stdin unattached", async () => {
+  // Historical default: no stdinInput means stdio[0] is "ignore" — a child that
+  // tries to read from stdin sees EOF immediately rather than hanging.
+  const result = await runCommand(process.execPath, [
+    "-e",
+    "let data = ''; process.stdin.on('data', (c) => { data += c; }); process.stdin.on('end', () => { process.stdout.write(`[${data}]`); process.exit(0); });",
+  ]);
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stdout, "[]");
+});
+
+test("runCommand does not crash when the child exits before consuming stdinInput", async () => {
+  // A child that exits immediately without reading stdin can trigger EPIPE on
+  // write; this must resolve normally rather than rejecting or crashing the
+  // process via an unhandled stream error.
+  const result = await runCommand(
+    process.execPath,
+    ["-e", "process.exit(0);"],
+    { stdinInput: "x".repeat(1_000_000) },
+  );
+
+  assert.equal(result.exitCode, 0);
+});

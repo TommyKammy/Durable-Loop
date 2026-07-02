@@ -12,6 +12,9 @@
  */
 
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import type {
   AgentRunner,
@@ -578,4 +581,51 @@ test("createExecutor passes buildFailureContextImpl to OpenCodeExecutor", () => 
   const executor = createExecutor(config, { buildFailureContextImpl });
   assert.ok(executor instanceof (require("./opencode-executor").OpenCodeExecutor));
   assert.ok(executor.capabilities.supportsResume);
+});
+
+async function writeExecutableScript(filePath: string, content: string): Promise<void> {
+  await fs.writeFile(filePath, content, "utf8");
+  await fs.chmod(filePath, 0o755);
+}
+
+test("runOpenCodeTurn feeds the prompt via stdin, never argv", async () => {
+  // Regression guard for issue #9: the prompt can contain sensitive
+  // journal/PR context, so it must not be visible via `ps`/`/proc/<pid>/cmdline`.
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-executor-test-"));
+  const workspacePath = path.join(root, "workspace");
+  const executorBinary = path.join(root, "fake-opencode.sh");
+  const argsPath = path.join(root, "args.log");
+  const stdinPath = path.join(root, "stdin.log");
+  await fs.mkdir(workspacePath, { recursive: true });
+
+  await writeExecutableScript(
+    executorBinary,
+    `#!/bin/sh
+set -eu
+printf '%s\n' "$@" > "${argsPath}"
+cat > "${stdinPath}"
+printf '{"type":"session.updated","session_id":"session-stdin"}\n'
+printf '{"type":"assistant","content":"stdin evidence acknowledged"}\n'
+exit 0
+`,
+  );
+
+  const secretPrompt = "Sensitive journal context: token=super-secret-value";
+  const result = await runOpenCodeTurn(
+    createConfig({ executorBinary }),
+    workspacePath,
+    secretPrompt,
+    "implementing",
+    null,
+    null,
+  );
+
+  const args = (await fs.readFile(argsPath, "utf8")).trim().split("\n");
+  const stdinContent = await fs.readFile(stdinPath, "utf8");
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.sessionId, "session-stdin");
+  assert.equal(result.lastMessage, "stdin evidence acknowledged");
+  assert.equal(args.some((arg) => arg.includes(secretPrompt)), false, "the prompt must not appear in argv");
+  assert.equal(stdinContent, secretPrompt, "the prompt must arrive intact via stdin");
 });

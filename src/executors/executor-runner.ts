@@ -400,6 +400,8 @@ export async function runExecutorCliCommand(
     parseJsonOutput?: boolean;
     /** Bounded stdout capture limit (chars). Defaults to EXECUTOR_STDOUT_CAPTURE_LIMIT. */
     stdoutCaptureLimitBytes?: number;
+    /** Written to the child's stdin instead of argv, e.g. to keep the prompt off the process list. */
+    stdinInput?: string;
   },
 ): Promise<ExecutorTurnResult> {
   const result = await runCommand(binary, args, {
@@ -410,6 +412,7 @@ export async function runExecutorCliCommand(
     // Bounded (not null) so huge/runaway output cannot exhaust memory; the cap
     // is generous and capture preserves both ends for the JSON line parsers.
     stdoutCaptureLimitBytes: options.stdoutCaptureLimitBytes ?? EXECUTOR_STDOUT_CAPTURE_LIMIT,
+    stdinInput: options.stdinInput,
   });
 
   const parseJson = options.parseJsonOutput ?? true;

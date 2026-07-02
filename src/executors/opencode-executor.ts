@@ -68,11 +68,14 @@ export function detectOpenCodeCapabilities(
  * - `--session <id>` for resume (or `--continue` for last session)
  * - `--dangerously-skip-permissions` for autonomous operation
  * - `--dir <workspace>` for workspace isolation
+ *
+ * The prompt is deliberately not passed as a positional argument here — it's
+ * fed via stdin instead (`opencode run` reads the message from stdin when no
+ * positional message is given) so it doesn't show up in `ps`/`/proc/<pid>/cmdline`.
  */
 export function buildOpenCodeArgs(
   config: SupervisorConfig,
   workspacePath: string,
-  prompt: string,
   state?: RunState,
   sessionId?: string | null,
 ): string[] {
@@ -105,9 +108,6 @@ export function buildOpenCodeArgs(
 
   // Workspace directory
   args.push("--dir", workspacePath);
-
-  // Prompt (positional argument)
-  args.push(prompt);
 
   return args;
 }
@@ -159,7 +159,7 @@ export const runOpenCodeTurn: RunExecutorTurnFn = async (
   _record,
   sessionId,
 ): Promise<ExecutorTurnResult> => {
-  const args = buildOpenCodeArgs(config, workspacePath, prompt, state, sessionId);
+  const args = buildOpenCodeArgs(config, workspacePath, state, sessionId);
   const timeoutMs = resolveExecutorTurnTimeoutMinutes(config) * 60_000;
 
   return runExecutorCliCommand(config.executorBinary, args, {
@@ -167,6 +167,7 @@ export const runOpenCodeTurn: RunExecutorTurnFn = async (
     timeoutMs,
     sessionId,
     parseJsonOutput: true,
+    stdinInput: prompt,
     env: {
       ...process.env,
       CI: "1",

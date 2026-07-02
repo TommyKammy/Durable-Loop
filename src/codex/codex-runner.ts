@@ -48,6 +48,8 @@ export async function runCodexTurn(
   try {
     const overrideArgs = buildCodexConfigOverrideArgs(resolveCodexExecutionPolicy(config, state, record));
     const executionSafetyArgs = buildCodexExecutionSafetyArgs(config);
+    // The prompt is passed via stdin ("-") rather than as a positional argument
+    // so it doesn't show up in `ps`/`/proc/<pid>/cmdline` on multi-user hosts.
     const commandArgs = sessionId
       ? [
           "exec",
@@ -58,7 +60,7 @@ export async function runCodexTurn(
           "-o",
           messageFile,
           sessionId,
-          prompt,
+          "-",
         ]
       : [
           "exec",
@@ -69,7 +71,7 @@ export async function runCodexTurn(
           workspacePath,
           "-o",
           messageFile,
-          prompt,
+          "-",
         ];
     const result = await runCommand(
       config.executorBinary,
@@ -83,6 +85,7 @@ export async function runCodexTurn(
           CI: "1",
         },
         timeoutMs: resolveExecutorTurnTimeoutMinutes(config) * 60_000,
+        stdinInput: prompt,
       },
     );
 

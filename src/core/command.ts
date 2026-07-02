@@ -10,6 +10,13 @@ export interface CommandOptions {
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
   stdoutCaptureLimitBytes?: number | null;
+  /**
+   * When set, written to the child's stdin (then stdin is closed) instead of
+   * leaving stdin unattached. Lets callers feed sensitive input (e.g. a
+   * prompt) without it appearing in argv, where it would be visible via
+   * `ps`/`/proc/<pid>/cmdline` on multi-user hosts.
+   */
+  stdinInput?: string;
 }
 
 export interface CommandResult {
@@ -185,13 +192,31 @@ export async function runCommand(
   const allowExitCodes = options.allowExitCodes ?? [0];
   const commandSummary = renderCommandSummary(command, args);
 
+  const hasStdinInput = typeof options.stdinInput === "string";
+
   return new Promise<CommandResult>((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: options.cwd,
-      detached: typeof options.timeoutMs === "number" && process.platform !== "win32",
-      env: options.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const child = hasStdinInput
+      ? spawn(command, args, {
+          cwd: options.cwd,
+          detached: typeof options.timeoutMs === "number" && process.platform !== "win32",
+          env: options.env,
+          stdio: ["pipe", "pipe", "pipe"],
+        })
+      : spawn(command, args, {
+          cwd: options.cwd,
+          detached: typeof options.timeoutMs === "number" && process.platform !== "win32",
+          env: options.env,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+
+    if (typeof options.stdinInput === "string" && child.stdin) {
+      // A child that exits before reading all of stdin (e.g. it errors out
+      // early) can trigger EPIPE on write; that's expected, not a command
+      // failure, so swallow it here instead of letting it surface as an
+      // unhandled stream error.
+      child.stdin.on("error", () => {});
+      child.stdin.end(options.stdinInput);
+    }
 
     const stdoutBuffer = createBoundedOutputBuffer();
     const stderrBuffer = createBoundedOutputBuffer();

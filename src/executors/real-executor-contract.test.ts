@@ -234,32 +234,34 @@ describe("CLI arg construction", () => {
 
   test("OpenCodeExecutor builds correct CLI args", () => {
     const config = createConfig({ codexModelStrategy: "fixed", codexModel: "anthropic/claude-sonnet" });
-    const args = buildOpenCodeArgs(config, "/ws", "PROMPT", "implementing", "sess-1");
+    const args = buildOpenCodeArgs(config, "/ws", "implementing", "sess-1");
 
     assert.deepEqual(args.slice(0, 3), ["run", "--format", "json"]);
     assert.equal(flagValue(args, "--model"), "anthropic/claude-sonnet");
     assert.equal(flagValue(args, "--session"), "sess-1");
     assert.equal(flagValue(args, "--dir"), "/ws");
     assert.ok(args.includes("--dangerously-skip-permissions"));
-    assert.equal(args[args.length - 1], "PROMPT");
+    // The prompt is fed via stdin, not argv — it must never appear in args.
+    assert.equal(args.includes("PROMPT"), false);
 
     // No session flag when resuming is not requested.
-    const fresh = buildOpenCodeArgs(createConfig(), "/ws", "PROMPT", "implementing");
+    const fresh = buildOpenCodeArgs(createConfig(), "/ws", "implementing");
     assert.equal(fresh.includes("--session"), false);
   });
 
   test("ClaudeCodeExecutor builds correct CLI args", () => {
     const config = createConfig({ codexModelStrategy: "fixed", codexModel: "claude-opus" });
-    const args = buildClaudeCodeArgs(config, "/ws", "PROMPT", "implementing", "sess-1");
+    const args = buildClaudeCodeArgs(config, "/ws", "implementing", "sess-1");
 
     assert.deepEqual(args.slice(0, 3), ["-p", "--output-format", "json"]);
     assert.equal(flagValue(args, "--model"), "claude-opus");
     assert.equal(flagValue(args, "--resume"), "sess-1");
     assert.equal(flagValue(args, "--add-dir"), "/ws");
     assert.ok(args.includes("--dangerously-skip-permissions"));
-    assert.equal(args[args.length - 1], "PROMPT");
+    // The prompt is fed via stdin, not argv — it must never appear in args.
+    assert.equal(args.includes("PROMPT"), false);
 
-    const fresh = buildClaudeCodeArgs(createConfig(), "/ws", "PROMPT", "implementing");
+    const fresh = buildClaudeCodeArgs(createConfig(), "/ws", "implementing");
     assert.equal(fresh.includes("--resume"), false);
   });
 
@@ -288,8 +290,8 @@ describe("CLI arg construction", () => {
 
     assert.throws(() => new OpenCodeExecutor({ config: opencodeGated }), re);
     assert.throws(() => new ClaudeCodeExecutor({ config: claudeGated }), re);
-    assert.throws(() => buildOpenCodeArgs(opencodeGated, "/ws", "PROMPT", "implementing"), re);
-    assert.throws(() => buildClaudeCodeArgs(claudeGated, "/ws", "PROMPT", "implementing"), re);
+    assert.throws(() => buildOpenCodeArgs(opencodeGated, "/ws", "implementing"), re);
+    assert.throws(() => buildClaudeCodeArgs(claudeGated, "/ws", "implementing"), re);
   });
 
   test("CodexExecutor builds correct CLI args (via the Codex policy builders it delegates to)", () => {

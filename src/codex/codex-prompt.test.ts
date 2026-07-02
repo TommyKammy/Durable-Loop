@@ -1184,6 +1184,61 @@ test("buildProviderNeutralReviewLoopEvidence directly filters to active configur
   assert.doesNotMatch(evidence, /thread-outdated/);
 });
 
+test("buildProviderNeutralReviewLoopEvidence anchors a non-Codex must-fix thread to the provider's own comment, not a later human reply", () => {
+  // Regression guard for #19 routing: the must-fix branch previously fell back to
+  // latestCodexConnectorReviewCommentNode, which returns null for non-Codex threads and
+  // then fell all the way back to the thread's last comment overall (possibly a human
+  // reply). It must anchor to the provider's own latest comment instead.
+  const evidence = buildProviderNeutralReviewLoopEvidence({
+    config: createConfig({
+      reviewBotLogins: ["copilot-pull-request-reviewer"],
+    }),
+    record: null,
+    pr: createPullRequest({
+      number: 148,
+      headRefOid: "head-review-must-fix-148",
+    }),
+    reviewThreads: [],
+    activeReviewThreads: [
+      createReviewThread({
+        id: "thread-provider-must-fix",
+        path: "src/provider-must-fix.ts",
+        line: 21,
+        comments: {
+          nodes: [
+            {
+              id: "comment-provider-must-fix",
+              body: "This is a critical bug that must be fixed before merge.",
+              createdAt: "2026-03-11T00:05:00Z",
+              url: "https://example.test/pr/148#discussion_provider_must_fix",
+              author: {
+                login: "copilot-pull-request-reviewer",
+                typeName: "Bot",
+              },
+            },
+            {
+              id: "comment-provider-must-fix-human-reply",
+              body: "Looking into this now.",
+              createdAt: "2026-03-11T00:10:00Z",
+              url: "https://example.test/pr/148#discussion_provider_must_fix_reply",
+              author: {
+                login: "human-reviewer",
+                typeName: "User",
+              },
+            },
+          ],
+        },
+      }),
+    ],
+  }).join("\n");
+
+  assert.match(evidence, /Thread thread-provider-must-fix/);
+  assert.match(evidence, /reviewer=copilot-pull-request-reviewer/);
+  assert.match(evidence, /latest_comment_fingerprint=comment-provider-must-fix/);
+  assert.match(evidence, /url=https:\/\/example\.test\/pr\/148#discussion_provider_must_fix$/m);
+  assert.doesNotMatch(evidence, /comment-provider-must-fix-human-reply/);
+});
+
 test("buildCodexPrompt uses the Codex Connector finding fingerprint for provider-neutral retry counts", () => {
   const prompt = buildCodexPrompt({
     kind: "start",
